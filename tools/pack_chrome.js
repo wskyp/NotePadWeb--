@@ -2,6 +2,7 @@ var fs = require("fs");
 var path = require("path");
 var crypto = require("crypto");
 var child = require("child_process");
+var remoteConfig = require("./remote_config");
 
 var root = path.resolve(__dirname, "..");
 var outDir = path.resolve(root, "..", "NotePadWeb-release");
@@ -9,6 +10,9 @@ var stage = path.join(outDir, "NotePadWeb-chrome");
 var pemPath = path.join(outDir, "NotePadWeb-chrome.pem");
 var crxPath = path.join(outDir, "NotePadWeb-chrome.crx");
 var zipPath = path.join(outDir, "NotePadWeb-chrome.zip");
+
+var remote = remoteConfig.applyManifest();
+console.log("远程配置 " + remote.origin + remote.basePath);
 
 function copyFile(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });

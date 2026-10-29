@@ -189,6 +189,7 @@
     ]},
     { name: "帮助", items: [
       ["快捷键", "", "shortcuts"],
+      ["更新插件", "", "updateExt"],
       ["关于 NotePadWeb--", "", "about"]
     ]}
   ];
@@ -2200,6 +2201,35 @@
       langMenu: function () {},
       shortcuts: function () {
         ask("快捷键", "Ctrl+N/O/S 新建、打开、保存\nCtrl+F/H 查找、替换，F3 下一个\nCtrl+G 跳转，Ctrl+D 复制行\nCtrl+/ 注释，Ctrl+F2 书签，F2 下一书签\nCtrl+Shift+M Markdown 预览\nAlt+Up/Down 移动行\n拖动文件夹到窗口即可打开", [["ok", "关闭", true]]);
+      },
+      updateExt: function () {
+        if (!ND.desktop.inExtension()) {
+          toast("只有作为 Chrome 插件安装时才能更新");
+          return;
+        }
+        if (!ND.track || !ND.track.update) {
+          toast("当前版本没有更新能力");
+          return;
+        }
+        toast("正在检查更新…");
+        ND.track.update().then(function (result) {
+          if (!result) return;
+          if (result.status === "latest") {
+            ask("更新插件", "当前已经是最新版本 " + (result.version || "") + "。", [["ok", "关闭", true]]);
+            return;
+          }
+          var remote = result.remote ? ("新版本 " + result.remote + "。\n") : "";
+          var path = result.filename || "NotePadWeb-chrome.zip";
+          ask(
+            "更新插件",
+            remote + "压缩包已下载到：\n" + path + "\n\n请先解压，并用里面的文件覆盖当前插件目录，然后点「重新加载」。Chrome 不允许插件自己改安装目录，所以这一步需要手动完成。",
+            [["cancel", "稍后"], ["ok", "重新加载", true]]
+          ).then(function (ans) {
+            if (ans === "ok" && ND.track.reloadExtension) ND.track.reloadExtension();
+          });
+        }).catch(function (err) {
+          ask("更新插件", "暂时下不到更新包。" + (err && err.message ? ("\n" + err.message) : "") + "\n编辑功能可以继续用。", [["ok", "关闭", true]]);
+        });
       },
       about: function () {
         var intro = "作者：汪继鹏\n版本：v1.0\n\n用来编辑文本。可以同时打开多个文件和文件夹，按语言做语法高亮，也能查找替换、切换编码（UTF-8、GBK、GB18030、UTF-16 LE）、预览 Markdown、查看和修改十六进制，以及对比文件和文件夹。Markdown 会按标题、列表、表格和代码块排版。";

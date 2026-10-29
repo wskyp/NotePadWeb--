@@ -4,7 +4,6 @@ var ND = ND || {};
 ND.track = (function () {
   "use strict";
 
-  var URL = "http://127.0.0.1/eda_agent/notepad_web/cat";
   var sessionId = "";
   var installId = "";
   var ready = null;
@@ -13,6 +12,11 @@ ND.track = (function () {
   var left = false;
   var lastAction = "";
   var lastActionAt = 0;
+
+  function remoteUrl(name) {
+    if (ND.remote && typeof ND.remote.url === "function") return ND.remote.url(name);
+    return "";
+  }
 
   function enabled() {
     return ND.desktop && ND.desktop.inExtension();
@@ -70,7 +74,7 @@ ND.track = (function () {
           })
         };
         if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(4000);
-        return fetch(URL, opts);
+        return fetch(remoteUrl("cat"), opts);
       }).catch(function () {});
     } catch (err) {}
   }
@@ -115,5 +119,119 @@ ND.track = (function () {
     } catch (err) {}
   }
 
-  return { start: start, action: action };
+  function parseVersion(text) {
+    return String(text || "").trim().replace(/^v/i, "").split(/[.+-]/).map(function (part) {
+      var n = parseInt(part, 10);
+      return isNaN(n) ? 0 : n;
+    });
+  }
+
+  function versionNewer(remote, local) {
+    var a = parseVersion(remote);
+    var b = parseVersion(local);
+    var len = Math.max(a.length, b.length);
+    for (var i = 0; i < len; i++) {
+      var x = a[i] || 0;
+      var y = b[i] || 0;
+      if (x > y) return true;
+      if (x < y) return false;
+    }
+    return false;
+  }
+
+  function fetchUpdateInfo() {
+    var opts = { method: "GET", cache: "no-store" };
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(4000);
+    return fetch(remoteUrl("version"), opts).then(function (res) {
+      if (!res.ok) throw new Error("version " + res.status);
+      return res.json();
+    }).then(function (data) {
+      return {
+        version: data && data.version ? String(data.version) : "",
+        url: data && data.url ? String(data.url) : remoteUrl("update.zip")
+      };
+    }).catch(function () {
+      return { version: "", url: remoteUrl("update.zip") };
+    });
+  }
+
+  function downloadUpdate(url) {
+    return new Promise(function (resolve, reject) {
+      try {
+        if (!enabled() || !chrome.downloads || !chrome.downloads.download) {
+          reject(new Error("当前环境不能下载更新"));
+          return;
+        }
+        chrome.downloads.download({
+          url: url || remoteUrl("update.zip"),
+          filename: "NotePadWeb-chrome.zip",
+          conflictAction: "uniquify",
+          saveAs: false
+        }, function (id) {
+          if (chrome.runtime.lastError || id == null) {
+            reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || "下载失败"));
+            return;
+          }
+          function done(ok, detail) {
+            chrome.downloads.onChanged.removeListener(onChanged);
+            if (ok) resolve(detail);
+            else reject(new Error(detail || "下载失败"));
+          }
+          function onChanged(delta) {
+            if (!delta || delta.id !== id) return;
+            if (delta.error && delta.error.current) {
+              done(false, delta.error.current);
+              return;
+            }
+            if (!(delta.state && delta.state.current)) return;
+            if (delta.state.current === "complete") {
+              chrome.downloads.search({ id: id }, function (items) {
+                var item = items && items[0];
+                done(true, {
+                  id: id,
+                  filename: (item && item.filename) || "NotePadWeb-chrome.zip"
+                });
+              });
+              return;
+            }
+            if (delta.state.current === "interrupted") done(false, "下载中断");
+          }
+          chrome.downloads.onChanged.addListener(onChanged);
+        });
+      } catch (err) {
+        reject(err || new Error("下载失败"));
+      }
+    });
+  }
+
+  function reloadExtension() {
+    try { chrome.runtime.reload(); }
+    catch (err) {}
+  }
+
+  function update() {
+    if (!enabled()) return Promise.reject(new Error("只有 Chrome 插件可以使用更新"));
+    var local = version();
+    return fetchUpdateInfo().then(function (info) {
+      if (info.version && !versionNewer(info.version, local)) {
+        return { status: "latest", version: local, remote: info.version };
+      }
+      return downloadUpdate(info.url).then(function (file) {
+        return {
+          status: "downloaded",
+          version: local,
+          remote: info.version || "",
+          filename: file.filename
+        };
+      });
+    });
+  }
+
+  return {
+    start: start,
+    action: action,
+    update: update,
+    reloadExtension: reloadExtension,
+    version: version
+  };
 })();

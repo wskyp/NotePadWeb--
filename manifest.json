@@ -20,7 +20,12 @@
     "48": "ext/icon48.png",
     "128": "ext/icon128.png"
   },
-  "permissions": ["storage"],
-  "host_permissions": ["http://127.0.0.1/*"],
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "http://129.0.0.1/*"
+  ],
   "offline_enabled": true
 }
