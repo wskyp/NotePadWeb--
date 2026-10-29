@@ -1,0 +1,14 @@
+{
+  "name": "notepadweb",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "setup": "neu update",
+    "desktop": "neu update && node tools/stage_frontend.js && node tools/gen_icon.js && neu run",
+    "build": "neu update && node tools/stage_frontend.js && node tools/gen_icon.js && neu build --release && node tools/pack_desktop.js && node tools/clean.js",
+    "clean": "node tools/clean.js"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "11.8.0"
+  }
+}

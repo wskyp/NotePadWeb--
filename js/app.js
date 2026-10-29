@@ -17,7 +17,9 @@
     compare: null,
     compIndex: 0,
     findJob: 0,
-    treeHidden: 0
+    treeHidden: 0,
+    hydrating: false,
+    pendingRestore: { roots: [], files: [] }
   };
   var settings = loadSettings();
   ND.macro = { rec: false, play: false, ops: [] };
@@ -37,22 +39,22 @@
 
   var ICONS = {
     brand: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="1.5" y="1" width="13" height="14" rx="1" fill="#fff" stroke="#2b78c5"/><path d="M4 5h8M4 8h8M4 11h5" stroke="#2b78c5"/></svg>',
-    new: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3 1h7l3 3v11H3z" fill="#fff" stroke="#333"/><path d="M10 1v3h3" fill="none" stroke="#333"/><path d="M8 7v5M5.5 9.5h5" stroke="#2b78c5"/></svg>',
+    new: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3 1h7l3 3v11H3z" fill="#fff" stroke="currentColor"/><path d="M10 1v3h3" fill="none" stroke="currentColor"/><path d="M8 7v5M5.5 9.5h5" stroke="#2b78c5"/></svg>',
     open: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 4h5l1 2h8v7H1z" fill="#f6c445" stroke="#a57a12"/></svg>',
     save: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3 1h8l3 3v11H3z" fill="#4aa3ff"/><path d="M5 1v4h6V1M5 15v-5h7v5" fill="#fff"/></svg>',
-    saveall: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 3h7l2 2v8H2z" fill="#4aa3ff"/><path d="M6 2h7l2 2v8h-2" fill="none" stroke="#1d4e89"/></svg>',
-    undo: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M6 4L2 7l4 3V8h5a3 3 0 010 6H8" fill="none" stroke="#333" stroke-width="1.4"/></svg>',
-    redo: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M10 4l4 3-4 3V8H5a3 3 0 000 6h3" fill="none" stroke="#333" stroke-width="1.4"/></svg>',
-    cut: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="4" cy="4" r="2" fill="none" stroke="#333"/><circle cx="4" cy="12" r="2" fill="none" stroke="#333"/><path d="M6 5l7-3M6 11l7 3M8 8l5 0" stroke="#333"/></svg>',
-    copy: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="5" y="3" width="8" height="10" fill="#fff" stroke="#333"/><rect x="3" y="5" width="8" height="10" fill="#e8f2ff" stroke="#333"/></svg>',
-    paste: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M5 2h4l1 2h3v10H3V4h2z" fill="#fff7d6" stroke="#333"/></svg>',
-    find: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="7" cy="7" r="4" fill="none" stroke="#333"/><path d="M10 10l4 4" stroke="#c47d15" stroke-width="1.6"/></svg>',
-    replace: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 4h8M8 2l3 2-3 2M14 12H6M8 10l-3 2 3 2" fill="none" stroke="#333" stroke-width="1.3"/></svg>',
-    wrap: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 3h12M2 7h8a3 3 0 010 6H8" fill="none" stroke="#333"/><path d="M8 11l-2 2 2 2" fill="none" stroke="#333"/></svg>',
-    ws: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3 12h10M5 4v5M8 6v3M11 4v5" stroke="#333"/></svg>',
-    hex: '<svg viewBox="0 0 16 16" width="16" height="16"><text x="1" y="12" font-size="9" fill="#333">16</text></svg>',
-    compare: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="1" y="2" width="6" height="12" fill="#ffd0d0" stroke="#333"/><rect x="9" y="2" width="6" height="12" fill="#d8ffd8" stroke="#333"/></svg>',
-    md: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 3h14v10H1z" fill="#fff" stroke="#333"/><path d="M3 11V5l2 3 2-3v6M11 11V5h2" fill="none" stroke="#2b78c5" stroke-width="1.2"/></svg>'
+    saveall: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 3h7l2 2v8H2z" fill="#4aa3ff"/><path d="M6 2h7l2 2v8h-2" fill="none" stroke="currentColor"/></svg>',
+    undo: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M6 4L2 7l4 3V8h5a3 3 0 010 6H8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+    redo: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M10 4l4 3-4 3V8H5a3 3 0 000 6h3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+    cut: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="4" cy="4" r="2" fill="none" stroke="currentColor"/><circle cx="4" cy="12" r="2" fill="none" stroke="currentColor"/><path d="M6 5l7-3M6 11l7 3M8 8l5 0" fill="none" stroke="currentColor"/></svg>',
+    copy: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="5" y="3" width="8" height="10" fill="#fff" stroke="currentColor"/><rect x="3" y="5" width="8" height="10" fill="#e8f2ff" stroke="currentColor"/></svg>',
+    paste: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M5 2h4l1 2h3v10H3V4h2z" fill="#fff7d6" stroke="currentColor"/></svg>',
+    find: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="7" cy="7" r="4" fill="none" stroke="currentColor"/><path d="M10 10l4 4" stroke="#c47d15" stroke-width="1.6"/></svg>',
+    replace: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 4h8M8 2l3 2-3 2M14 12H6M8 10l-3 2 3 2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+    wrap: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 3h12M2 7h8a3 3 0 010 6H8" fill="none" stroke="currentColor"/><path d="M8 11l-2 2 2 2" fill="none" stroke="currentColor"/></svg>',
+    ws: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3 12h10M5 4v5M8 6v3M11 4v5" fill="none" stroke="currentColor"/></svg>',
+    hex: '<svg viewBox="0 0 16 16" width="16" height="16"><text x="1" y="12" font-size="9" fill="currentColor">16</text></svg>',
+    compare: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="1" y="2" width="6" height="12" fill="#ffd0d0" stroke="currentColor"/><rect x="9" y="2" width="6" height="12" fill="#d8ffd8" stroke="currentColor"/></svg>',
+    md: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M1 3h14v10H1z" fill="#fff" stroke="currentColor"/><path d="M3 11V5l2 3 2-3v6M11 11V5h2" fill="none" stroke="#2b78c5" stroke-width="1.2"/></svg>'
   };
 
   var MENUS = [
@@ -345,6 +347,7 @@
     $("#crumb").textContent = doc.path || doc.name;
     document.title = (doc.model.dirty() || doc.hexDirty ? "*" : "") + doc.name + " - NotePadWeb--";
     refreshMd();
+    rememberSession();
   }
 
   function stash(doc) {
@@ -411,6 +414,7 @@
     if (!state.docs.length) addDoc(createDoc("未命名-1"));
     else if (state.active === doc) activate(state.docs[Math.max(0, idx - 1)]);
     else renderTabs();
+    rememberSession();
   }
 
   var TREE_DRAW_CAP = 800;
@@ -536,7 +540,8 @@
     }
     var doc = createDoc(file.name);
     doc.file = file;
-    doc.path = extra.path || file.webkitRelativePath || file.name;
+    doc.path = extra.absPath || extra.path || file.webkitRelativePath || file.name;
+    doc.absPath = extra.absPath || null;
     doc.handle = extra.handle || null;
     doc.parent = extra.parent || null;
     doc.originalBytes = bytes;
@@ -567,11 +572,23 @@
     addDoc(doc);
     if (doc.binary && !truncated) toast("检测为二进制，已用十六进制打开");
     paintFileWarn();
+    if (doc.handle) forgetPending(doc.handle);
   }
 
-  async function openHandle(handle, parent, path) {
-    var file = await handle.getFile();
-    await openFileObject(file, { handle: handle, parent: parent, path: path || handle.name });
+  async function openHandle(handle, parent, path, quiet) {
+    try {
+      var existing = await findDocByHandle(handle);
+      if (existing) {
+        if (!quiet) activate(existing);
+        return existing;
+      }
+      var file = await handle.getFile();
+      await openFileObject(file, { handle: handle, parent: parent, path: path || handle.name });
+      return state.active && state.active.handle === handle ? state.active : await findDocByHandle(handle);
+    } catch (err) {
+      if (!quiet) toast("无法打开 " + ((handle && handle.name) || "文件") + "：" + (err.message || err));
+      return null;
+    }
   }
 
   function currentBytes(doc) {
@@ -603,6 +620,26 @@
       packed = ND.codec.encodeText(ND.codec.joinEol(doc.model.lines, doc.eol), "utf-8");
     }
     var bytes = packed.bytes;
+    if (ND.desktop.inDesktop()) {
+      try {
+        var nativePath = !saveAs && doc.absPath ? doc.absPath : await ND.desktop.invoke("pick_save", { suggested: doc.name });
+        if (!nativePath) return false;
+        await ND.desktop.invoke("write_file", { path: nativePath, data: ND.desktop.bytesToBase64(bytes) });
+        doc.absPath = nativePath;
+        doc.path = nativePath;
+        doc.name = ND.desktop.baseName(nativePath) || doc.name;
+        var partialNative = !!doc.truncated;
+        if (saveAs && partialNative) releaseTruncation(doc);
+        finishSave(doc, bytes);
+        toast(partialNative ? "已另存为已载入的开头。新文件只包含这部分，不是原来的完整文件。" : "已保存 " + doc.name);
+        renderTabs();
+        paintFileWarn();
+        return true;
+      } catch (err) {
+        toast("保存失败：" + (err && err.message ? err.message : err));
+        return false;
+      }
+    }
     try {
       if (!saveAs && doc.handle && doc.handle.createWritable) {
         var stream = await doc.handle.createWritable();
@@ -656,6 +693,7 @@
     if (doc === state.active) editor.hexDirty = false;
     paintDirty();
     paintStatus();
+    rememberSession();
   }
 
   function download(bytes, name) {
@@ -670,10 +708,30 @@
   }
 
   async function openFolder() {
+    if (ND.desktop.inDesktop()) {
+      try {
+        var picked = await ND.desktop.invoke("pick_folder");
+        if (!picked) return;
+        var root = {
+          nid: state.nid++,
+          name: ND.desktop.baseName(picked),
+          kind: "dir",
+          absPath: picked,
+          children: null,
+          expanded: true,
+          parent: null
+        };
+        await loadChildren(root);
+        await addRoot(root);
+      } catch (err) {
+        toast("打开文件夹失败：" + (err && err.message ? err.message : err));
+      }
+      return;
+    }
     if (window.showDirectoryPicker && window.isSecureContext) {
       try {
         var dir = await window.showDirectoryPicker({ mode: "readwrite" });
-        var root = { nid: state.nid++, name: dir.name, kind: "dir", handle: dir, children: null, expanded: true, parent: null };
+        var root = { nid: state.nid++, name: dir.name || "文件夹", kind: "dir", handle: dir, children: null, expanded: true, parent: null };
         await loadChildren(root);
         await addRoot(root);
         return;
@@ -684,8 +742,30 @@
     $("#dirOpen").click();
   }
 
+  function dirNeedsLoad(node) {
+    return !!(node && node.kind === "dir" && node.children == null && (node.handle || node.absPath));
+  }
+
   async function loadChildren(node) {
-    if (!node.handle || node.kind !== "dir") return;
+    if (!node || node.kind !== "dir") return;
+    if (node.absPath && ND.desktop.inDesktop()) {
+      var entries = await ND.desktop.invoke("list_dir", { path: node.absPath });
+      var kids = (entries || []).map(function (entry) {
+        return {
+          nid: state.nid++,
+          name: entry.name,
+          kind: entry.kind === "dir" ? "dir" : "file",
+          absPath: entry.path,
+          parent: node,
+          children: entry.kind === "dir" ? null : undefined,
+          expanded: false
+        };
+      });
+      sortNodes(kids);
+      node.children = kids;
+      return;
+    }
+    if (!node.handle) return;
     var kids = [];
     var iter = node.handle.entries();
     while (true) {
@@ -721,6 +801,7 @@
   async function alreadyOpen(root) {
     for (var i = 0; i < state.roots.length; i++) {
       var old = state.roots[i];
+      if (root.absPath && old.absPath && ND.desktop.normAbs(root.absPath) === ND.desktop.normAbs(old.absPath)) return old;
       if (root.handle && old.handle && old.handle.isSameEntry) {
         try { if (await old.handle.isSameEntry(root.handle)) return old; } catch (e) { /* ignore */ }
       }
@@ -728,12 +809,13 @@
     return null;
   }
 
-  async function addRoot(root, extra) {
+  async function addRoot(root, extra, quiet) {
     var same = await alreadyOpen(root);
     if (same) {
       same.expanded = true;
       renderSide();
-      toast(same.name + " 已经在侧栏里");
+      if (!quiet) toast(same.name + " 已经在侧栏里");
+      if (root.handle) forgetPending(root.handle);
       return false;
     }
     root.parent = null;
@@ -743,7 +825,9 @@
     renderSide();
     var msg = state.roots.length === 1 ? "已打开 " + root.name : "已再打开 " + root.name + "，侧栏共 " + state.roots.length + " 个目录";
     if (extra) msg += "。" + extra;
-    toast(msg);
+    if (!quiet) toast(msg);
+    if (root.handle) forgetPending(root.handle);
+    rememberSession();
     return true;
   }
 
@@ -752,6 +836,7 @@
     state.workspace = state.roots[0] || null;
     renderSide();
     toast("已从侧栏移除 " + node.name + (state.roots.length ? "，还剩 " + state.roots.length + " 个目录" : ""));
+    rememberSession();
   }
 
   function closeFolders() {
@@ -760,6 +845,7 @@
     state.workspace = null;
     renderSide();
     toast("已从侧栏移除全部文件夹，已经打开的文档还在");
+    rememberSession();
   }
 
   function workspaceFromFiles(files) {
@@ -857,7 +943,8 @@
       var icon = n.kind === "dir" ? "📁" : fileIcon(n.name);
       var rootCls = isRoot(n) ? " root" : "";
       var closer = isRoot(n) ? '<button type="button" class="root-x" data-remove-root="' + n.nid + '" title="从侧栏移除">×</button>' : "";
-      html += '<div class="node' + rootCls + '" data-nid="' + n.nid + '" style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + closer + "</div>" + childHtml;
+      var tip = n.kind === "dir" ? ' title="' + ND.esc(displayPath(n)) + '"' : "";
+      html += '<div class="node' + rootCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + closer + "</div>" + childHtml;
     }
     return html;
   }
@@ -878,13 +965,14 @@
     if (!node) return;
     if (node.kind === "dir") {
       node.expanded = !node.expanded;
-      if (node.expanded && node.children == null && node.handle) {
+      if (node.expanded && node.children == null && (node.handle || node.absPath)) {
         await loadChildren(node);
       }
       renderSide();
       return;
     }
-    if (node.handle) await openHandle(node.handle, node.parent, nodePath(node));
+    if (node.absPath && ND.desktop.inDesktop()) await openAbsPath(node.absPath);
+    else if (node.handle) await openHandle(node.handle, node.parent, nodePath(node));
     else if (node.file) await openFileObject(node.file, { parent: node.parent, path: node.file.webkitRelativePath || node.name });
   }
 
@@ -895,10 +983,41 @@
     return parts.join("/");
   }
 
+  function displayPath(node) {
+    if (node.absPath) return node.absPath;
+    var sep = /Win/i.test(navigator.platform || "") || /Windows/i.test(navigator.userAgent || "") ? "\\" : "/";
+    return nodePath(node).split("/").join(sep);
+  }
+
+  async function openAbsPath(absPath, quiet) {
+    try {
+      var key = ND.desktop.normAbs(absPath);
+      for (var i = 0; i < state.docs.length; i++) {
+        if (state.docs[i].absPath && ND.desktop.normAbs(state.docs[i].absPath) === key) {
+          if (!quiet) activate(state.docs[i]);
+          return state.docs[i];
+        }
+      }
+      var meta = await ND.desktop.invoke("file_meta", { path: absPath });
+      if (meta.isDir) {
+        if (!quiet) toast("这是文件夹");
+        return null;
+      }
+      var file = ND.desktop.lazyFile(absPath, meta.size, meta.name);
+      await openFileObject(file, { path: absPath, absPath: absPath });
+      return state.active;
+    } catch (err) {
+      if (!quiet) toast("无法打开 " + ND.desktop.baseName(absPath) + "：" + (err && err.message ? err.message : err));
+      return null;
+    }
+  }
+
   function treeMenu(x, y, node) {
     var items = [];
     if (node.kind === "file") items.push(["打开", "openNode"]);
-    if (node.handle && (isRoot(node) || (node.parent && node.parent.handle))) {
+    var nativeDir = ND.desktop.inDesktop() && ((node.kind === "dir" && node.absPath) || (node.parent && node.parent.absPath));
+    var browserDir = node.handle && (isRoot(node) || (node.parent && node.parent.handle));
+    if (nativeDir || browserDir) {
       items.push(["新建文件…", "newInDir"]);
       if (node.kind === "dir") items.push(["新建文件夹…", "newDir"]);
       if (!isRoot(node)) {
@@ -906,13 +1025,13 @@
         items.push(["删除", "deleteNode"]);
       }
     }
-    items.push(["复制路径", "copyNodePath"]);
+    items.push([node.kind === "dir" ? "复制绝对路径" : "复制路径", "copyNodePath"]);
     items.push(["刷新", "refreshNode"]);
     if (isRoot(node)) items.push(["从侧栏移除", "removeRoot"]);
     popup(x, y, items, async function (act) {
       if (act === "openNode" && node.kind === "file") await onTreeClick(node.nid);
-      if (act === "copyNodePath") copyText(nodePath(node));
-      if (act === "refreshNode" && node.kind === "dir" && node.handle) { await loadChildren(node); renderSide(); }
+      if (act === "copyNodePath") copyText(displayPath(node));
+      if (act === "refreshNode" && node.kind === "dir" && (node.handle || node.absPath)) { await loadChildren(node); renderSide(); }
       if (act === "removeRoot") removeRoot(node);
       if (act === "newInDir") await createIn(node.kind === "dir" ? node : node.parent, false);
       if (act === "newDir") await createIn(node.kind === "dir" ? node : node.parent, true);
@@ -922,6 +1041,20 @@
   }
 
   async function createIn(dir, folder) {
+    if (dir && dir.absPath && ND.desktop.inDesktop()) {
+      var name = await promptText(folder ? "新建文件夹" : "新建文件", folder ? "new-folder" : "untitled.txt");
+      if (!name) return;
+      try {
+        var created = await ND.desktop.invoke("create_entry", { dir: dir.absPath, name: name, kind: folder ? "dir" : "file" });
+        if (!folder) await openAbsPath(created);
+        await loadChildren(dir);
+        dir.expanded = true;
+        renderSide();
+      } catch (err) {
+        toast("新建失败：" + (err && err.message ? err.message : err));
+      }
+      return;
+    }
     if (!dir || !dir.handle) { toast("这个目录是只读打开的，不能新建"); return; }
     var name = await promptText(folder ? "新建文件夹" : "新建文件", folder ? "new-folder" : "untitled.txt");
     if (!name) return;
@@ -938,6 +1071,45 @@
   async function renameNode(node) {
     var name = await promptText("重命名", node.name);
     if (!name || name === node.name) return;
+    if (node.absPath && ND.desktop.inDesktop()) {
+      try {
+        var renamed = await ND.desktop.invoke("rename_path", { path: node.absPath, name: name });
+        var old = node.absPath;
+        function mapAbs(path) {
+          if (!path) return null;
+          var win = /Win/i.test(navigator.platform || "") || /Windows/i.test(navigator.userAgent || "");
+          var norm = function (s) { return win ? String(s).replace(/\//g, "\\").toLowerCase() : String(s); };
+          var p = norm(path);
+          var o = norm(old);
+          if (p === o) return renamed;
+          var sep = win ? "\\" : "/";
+          if (p.indexOf(o + sep) !== 0) return null;
+          return renamed + String(path).slice(String(old).length);
+        }
+        function walkRenamed(n) {
+          if (n.absPath) {
+            var next = mapAbs(n.absPath);
+            if (next) n.absPath = next;
+          }
+          (n.children || []).forEach(walkRenamed);
+        }
+        walkRenamed(node);
+        node.name = ND.desktop.baseName(node.absPath);
+        state.docs.forEach(function (d) {
+          var next = mapAbs(d.absPath);
+          if (!next) return;
+          d.absPath = next;
+          d.path = next;
+          d.name = ND.desktop.baseName(next);
+        });
+        renderSide();
+        renderTabs();
+        rememberSession();
+      } catch (err) {
+        toast("重命名失败：" + (err && err.message ? err.message : err));
+      }
+      return;
+    }
     if (node.handle.move) {
       await node.handle.move(name);
       node.name = name;
@@ -948,6 +1120,19 @@
   }
 
   async function deleteNode(node) {
+    if (node.absPath && ND.desktop.inDesktop()) {
+      var yes = await ask("删除", "删除 " + node.name + " ？", [["cancel", "取消"], ["ok", "删除", true]]);
+      if (yes !== "ok") return;
+      try {
+        await ND.desktop.invoke("remove_path", { path: node.absPath, recursive: node.kind === "dir" });
+        if (node.parent) await loadChildren(node.parent);
+        renderSide();
+        rememberSession();
+      } catch (err) {
+        toast("删除失败：" + (err && err.message ? err.message : err));
+      }
+      return;
+    }
     if (!node.parent || !node.parent.handle) return;
     var ok = await ask("删除", "删除 " + node.name + " ？", [["cancel", "取消"], ["ok", "删除", true]]);
     if (ok !== "ok") return;
@@ -1154,7 +1339,7 @@
     if (!node || node.kind !== "dir") return;
     if (job != null && job !== state.findJob) return;
     if (!isRoot(node) && skipDirName(node.name)) return;
-    if (node.children == null && node.handle) await loadChildren(node);
+    if (dirNeedsLoad(node)) await loadChildren(node);
     var kids = node.children || [];
     for (var i = 0; i < kids.length; i++) {
       if (i % 40 === 0) await yieldUI();
@@ -1180,7 +1365,7 @@
       if (job !== state.findJob || capped) return;
       if (node.kind === "dir") {
         if (!isRoot(node) && skipDirName(node.name)) { skippedDirs++; return; }
-        if (node.children == null && node.handle) await loadChildren(node);
+        if (node.children == null && (node.handle || node.absPath)) await loadChildren(node);
         var kids = node.children || [];
         for (var i = 0; i < kids.length; i++) {
           if (i % 25 === 0) {
@@ -1240,6 +1425,11 @@
   async function readNode(node) {
     try {
       var file = node.file || (node.handle && node.handle.getFile ? await node.handle.getFile() : null);
+      if (!file && node.absPath && ND.desktop.inDesktop()) {
+        var meta = await ND.desktop.invoke("file_meta", { path: node.absPath });
+        if (meta.isDir || meta.size > 800000) return null;
+        file = ND.desktop.lazyFile(node.absPath, meta.size, meta.name);
+      }
       if (!file || file.size > 800000) return null;
       var bytes = new Uint8Array(await file.arrayBuffer());
       if (looksBinary(bytes)) return null;
@@ -1256,10 +1446,11 @@
 
   async function openHit(hit) {
     var existing = null;
-    var path = hit.node.file ? hit.node.file.webkitRelativePath : nodePath(hit.node);
-    for (var i = 0; i < state.docs.length; i++) if (state.docs[i].path === path) existing = state.docs[i];
+    var path = hit.node.absPath || (hit.node.file ? hit.node.file.webkitRelativePath : nodePath(hit.node));
+    for (var i = 0; i < state.docs.length; i++) if (state.docs[i].path === path || (hit.node.absPath && state.docs[i].absPath && ND.desktop.normAbs(state.docs[i].absPath) === ND.desktop.normAbs(hit.node.absPath))) existing = state.docs[i];
     if (!existing) {
-      if (hit.node.handle) await openHandle(hit.node.handle, hit.node.parent, path);
+      if (hit.node.absPath && ND.desktop.inDesktop()) await openAbsPath(hit.node.absPath);
+      else if (hit.node.handle) await openHandle(hit.node.handle, hit.node.parent, path);
       else if (hit.node.file) await openFileObject(hit.node.file, { path: path, parent: hit.node.parent });
     } else activate(existing);
     if (active()) {
@@ -1406,6 +1597,13 @@
   }
 
   async function fileForRel(doc, rel) {
+    if (doc && doc.absPath && ND.desktop.inDesktop()) {
+      var abs = await ND.desktop.invoke("resolve_path", { base: doc.absPath, rel: rel });
+      var meta = await ND.desktop.invoke("file_meta", { path: abs });
+      if (meta.isDir || meta.size > 20 * 1024 * 1024) return null;
+      var bytes = await ND.desktop.readRange(abs, 0, meta.size);
+      return new File([bytes], meta.name);
+    }
     var full = resolveRelPath(doc.path || doc.name, rel);
     var node = findNodeByPath(full);
     if (node) {
@@ -1452,9 +1650,19 @@
     var file = null;
     try { file = await fileForRel(doc, rel); } catch (e) { file = null; }
     if (!file) { toast("找不到 " + rel); return; }
+    if (doc.absPath && ND.desktop.inDesktop()) {
+      try {
+        var abs = await ND.desktop.invoke("resolve_path", { base: doc.absPath, rel: rel });
+        await openAbsPath(abs);
+      } catch (err) {
+        toast("找不到 " + rel);
+      }
+      return;
+    }
     var full = resolveRelPath(doc.path || doc.name, rel);
     var node = findNodeByPath(full);
-    if (node && node.handle) await openHandle(node.handle, node.parent, full);
+    if (node && node.absPath && ND.desktop.inDesktop()) await openAbsPath(node.absPath);
+    else if (node && node.handle) await openHandle(node.handle, node.parent, full);
     else await openFileObject(file, { parent: doc.parent, path: full });
   }
 
@@ -1605,6 +1813,10 @@
       else if (!L && R) kind = "onlyR";
       else {
         var lf = L.file || (L.handle ? await L.handle.getFile() : null);
+        if (!lf && L.absPath && ND.desktop.inDesktop()) {
+          var lmeta = await ND.desktop.invoke("file_meta", { path: L.absPath });
+          lf = ND.desktop.lazyFile(L.absPath, lmeta.size, lmeta.name);
+        }
         if (lf && R && lf.size !== R.size) kind = "diff";
         else if (lf && R && !sizeOnly && lf.size < 200000) {
           var a = new Uint8Array(await lf.arrayBuffer());
@@ -1851,8 +2063,14 @@
     var actions = {
       "new": function () { addDoc(createDoc("未命名-" + (state.docs.length + 1))); },
       openFile: function () {
+        if (ND.desktop.inDesktop()) {
+          ND.desktop.invoke("pick_files").then(function (paths) {
+            (paths || []).forEach(function (p) { openAbsPath(p); });
+          }).catch(function (err) { toast("打开失败：" + (err && err.message ? err.message : err)); });
+          return;
+        }
         if (window.showOpenFilePicker && window.isSecureContext) {
-          window.showOpenFilePicker({ multiple: true }).then(function (handles) {
+          pickFiles({ multiple: true, mode: "readwrite" }).then(function (handles) {
             handles.forEach(function (h) { openHandle(h, null, h.name); });
           }).catch(function () {});
         } else $("#fileOpen").click();
@@ -1983,7 +2201,11 @@
         ask("快捷键", "Ctrl+N/O/S 新建、打开、保存\nCtrl+F/H 查找、替换，F3 下一个\nCtrl+G 跳转，Ctrl+D 复制行\nCtrl+/ 注释，Ctrl+F2 书签，F2 下一书签\nCtrl+Shift+M Markdown 预览\nAlt+Up/Down 移动行\n拖动文件夹到窗口即可打开", [["ok", "关闭", true]]);
       },
       about: function () {
-        ask("关于 NotePadWeb--", "作者：汪继鹏 w00524734\n版本：v1.0\n\n这是一个纯前端的 NotePadWeb--。用浏览器打开即可编辑文本、浏览目录、语法高亮、查找替换、对比文件。Markdown 会在旁边按标题、列表、表格和代码块排版显示。\n直接双击打开时，保存会下载文件；通过 localhost 打开时，可以用系统文件框写回原文件。", [["ok", "关闭", true]]);
+        var intro = "作者：汪继鹏\n版本：v1.0\n\n用来编辑文本。可以同时打开多个文件和文件夹，按语言做语法高亮，也能查找替换、切换编码（UTF-8、GBK、GB18030、UTF-16 LE）、预览 Markdown、查看和修改十六进制，以及对比文件和文件夹。Markdown 会按标题、列表、表格和代码块排版。";
+        var how = ND.desktop.inDesktop()
+          ? "\n在这个桌面窗口里，保存会写回原来的文件。下次启动会重新打开上次的文件夹和文件。"
+          : "\n用 Chrome 或 Edge 通过 localhost 或 https 打开时，保存可以写回原文件，并记住上次打开的文件夹和文件。直接双击 index.html 时，保存会下载一份副本。";
+        ask("关于 NotePadWeb--", intro + how, [["ok", "关闭", true]]);
       }
     };
     if (actions[act]) actions[act]();
@@ -2274,7 +2496,15 @@
     });
     resizeDrag($("#sideResizer"), true);
     resizeDrag($("#panelResizer"), false);
-    $("#banner").addEventListener("click", function () { $("#banner").classList.add("hidden"); });
+    $("#banner").addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-banner]");
+      if (btn) {
+        if (btn.getAttribute("data-banner") === "restore") confirmRestore();
+        else forgetRestore();
+        return;
+      }
+      if ($("#banner").dataset.kind === "local") $("#banner").classList.add("hidden");
+    });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { editor.measure(); editor.schedule(); });
   }
 
@@ -2358,6 +2588,382 @@
     });
   }
 
+  function pickFiles(opts) {
+    return window.showOpenFilePicker(opts).catch(function (err) {
+      if (err && err.name === "AbortError") throw err;
+      if (opts && opts.mode) return window.showOpenFilePicker({ multiple: !!opts.multiple });
+      throw err;
+    });
+  }
+
+  var sessionDbPromise = null;
+  var persistGen = 0;
+
+  function sessionDb() {
+    if (!window.indexedDB) return Promise.reject(new Error("no indexedDB"));
+    if (!sessionDbPromise) {
+      sessionDbPromise = new Promise(function (resolve, reject) {
+        var req = indexedDB.open("notepadmm", 1);
+        req.onupgradeneeded = function () {
+          if (!req.result.objectStoreNames.contains("session")) req.result.createObjectStore("session");
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () {
+          sessionDbPromise = null;
+          reject(req.error);
+        };
+      });
+    }
+    return sessionDbPromise;
+  }
+
+  function loadSession() {
+    return sessionDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction("session", "readonly");
+        var req = tx.objectStore("session").get("open");
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function saveSession(data) {
+    return sessionDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction("session", "readwrite");
+        var req = tx.objectStore("session").put(data, "open");
+        req.onsuccess = function () { resolve(); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  async function dedupeHandles(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i];
+      if (!h || typeof h.isSameEntry !== "function") continue;
+      var dup = false;
+      for (var j = 0; j < out.length; j++) {
+        try { if (await out[j].isSameEntry(h)) { dup = true; break; } } catch (e) { /* 比较失败就当作不同项 */ }
+      }
+      if (!dup) out.push(h);
+    }
+    return out;
+  }
+
+  async function findDocByHandle(handle) {
+    if (!handle || typeof handle.isSameEntry !== "function") return null;
+    for (var i = 0; i < state.docs.length; i++) {
+      var h = state.docs[i].handle;
+      if (!h || typeof h.isSameEntry !== "function") continue;
+      try { if (await h.isSameEntry(handle)) return state.docs[i]; } catch (e) { /* ignore */ }
+    }
+    return null;
+  }
+
+  async function permissionOf(handle, ask) {
+    if (!handle) return "denied";
+    var method = ask ? handle.requestPermission : handle.queryPermission;
+    if (typeof method !== "function") return ask ? "denied" : "prompt";
+    try {
+      var rw = await method.call(handle, { mode: "readwrite" });
+      if (rw === "granted") return "granted";
+      if (typeof handle.queryPermission === "function") {
+        var rd = await handle.queryPermission({ mode: "read" });
+        if (rd === "granted") return "read";
+        if (rw === "denied" || rd === "denied") return "denied";
+      } else if (rw === "denied") return "denied";
+      return "prompt";
+    } catch (e) {
+      return ask ? "denied" : "prompt";
+    }
+  }
+
+  async function reviveRoot(dir) {
+    var root = { nid: state.nid++, name: dir.name || "文件夹", kind: "dir", handle: dir, children: null, expanded: true, parent: null };
+    try {
+      await loadChildren(root);
+    } catch (e) {
+      return false;
+    }
+    await addRoot(root, null, true);
+    return true;
+  }
+
+  function forgetPending(handle) {
+    var pending = state.pendingRestore;
+    if (!pending || !handle || typeof handle.isSameEntry !== "function") return;
+    function pull(list) {
+      var jobs = [];
+      for (var i = 0; i < list.length; i++) {
+        (function (h, idx) {
+          if (!h || typeof h.isSameEntry !== "function") return;
+          jobs.push(h.isSameEntry(handle).then(function (same) {
+            if (same) list[idx] = null;
+          }).catch(function () {}));
+        })(list[i], i);
+      }
+      return Promise.all(jobs).then(function () {
+        for (var j = list.length - 1; j >= 0; j--) if (!list[j]) list.splice(j, 1);
+      });
+    }
+    Promise.all([pull(pending.roots), pull(pending.files)]).then(function () {
+      paintRestoreBanner();
+      rememberSession();
+    });
+  }
+
+  function paintRestoreBanner() {
+    var banner = $("#banner");
+    if (!banner || banner.dataset.kind === "local") return;
+    var pending = state.pendingRestore || { roots: [], files: [] };
+    var nRoot = pending.roots.length;
+    var nFile = pending.files.length;
+    if (!nRoot && !nFile) {
+      if (banner.dataset.kind === "restore") {
+        banner.classList.add("hidden");
+        banner.dataset.kind = "";
+        banner.textContent = "";
+      }
+      return;
+    }
+    var what = (nRoot ? nRoot + " 个文件夹" : "") + (nRoot && nFile ? "、" : "") + (nFile ? nFile + " 个文件" : "");
+    banner.dataset.kind = "restore";
+    banner.innerHTML = "上次还开着 " + what + "。浏览器需要你确认后才能再次读取。" +
+      '<button type="button" data-banner="restore">恢复</button>' +
+      '<button type="button" data-banner="forget">不再恢复</button>';
+    banner.classList.remove("hidden");
+  }
+
+  function dropPlaceholder() {
+    if (state.docs.length < 2) return;
+    for (var i = state.docs.length - 1; i >= 0; i--) {
+      var d = state.docs[i];
+      if (d.handle || d.file || d.path) continue;
+      if (d.model.dirty() || d.hexDirty || d.model.text() !== "") continue;
+      if (d.name.indexOf("未命名") !== 0) continue;
+      state.docs.splice(i, 1);
+    }
+    if (!state.docs.length) addDoc(createDoc("未命名-1"));
+    else if (state.docs.indexOf(state.active) < 0) activate(state.docs[0]);
+    else {
+      renderTabs();
+      updateHint();
+    }
+  }
+
+  async function collectSession() {
+    var roots = [];
+    var files = [];
+    var active = 0;
+    state.roots.forEach(function (r) { if (r.handle) roots.push(r.handle); });
+    state.docs.forEach(function (d) {
+      if (!d.handle || d.handle.kind === "directory") return;
+      if (d === state.active) active = files.length;
+      files.push(d.handle);
+    });
+    var pending = state.pendingRestore || { roots: [], files: [] };
+    pending.roots.forEach(function (h) { roots.push(h); });
+    pending.files.forEach(function (h) { files.push(h); });
+    roots = await dedupeHandles(roots);
+    files = await dedupeHandles(files);
+    if (active >= files.length) active = 0;
+    return { roots: roots, files: files, active: active };
+  }
+
+  function writeNativeSession() {
+    var roots = [];
+    var files = [];
+    var active = 0;
+    state.roots.forEach(function (r) { if (r.absPath) roots.push(r.absPath); });
+    state.docs.forEach(function (d) {
+      if (!d.absPath) return;
+      if (d === state.active) active = files.length;
+      files.push(d.absPath);
+    });
+    if (active >= files.length) active = 0;
+    try {
+      localStorage.setItem("notepadmm.nativeSession", JSON.stringify({ roots: roots, files: files, active: active }));
+    } catch (e) { /* 配额不足时下次再记 */ }
+  }
+
+  async function restoreNativeSession() {
+    var done = false;
+    var folders = 0;
+    var opened = [];
+    try {
+      var raw = localStorage.getItem("notepadmm.nativeSession");
+      var saved = raw ? JSON.parse(raw) : null;
+      if (!saved || (!(saved.roots && saved.roots.length) && !(saved.files && saved.files.length))) return;
+      var roots = saved.roots || [];
+      for (var i = 0; i < roots.length; i++) {
+        try {
+          var meta = await ND.desktop.invoke("file_meta", { path: roots[i] });
+          if (!meta.isDir) continue;
+          var root = {
+            nid: state.nid++,
+            name: meta.name || ND.desktop.baseName(roots[i]),
+            kind: "dir",
+            absPath: roots[i],
+            children: null,
+            expanded: true,
+            parent: null
+          };
+          await loadChildren(root);
+          if (await addRoot(root, null, true)) folders++;
+        } catch (e) { /* 目录已经不在 */ }
+        await yieldUI();
+      }
+      var list = saved.files || [];
+      for (var j = 0; j < list.length; j++) {
+        opened.push(await openAbsPath(list[j], true));
+        await yieldUI();
+      }
+      var pick = opened[saved.active] || null;
+      if (!pick) {
+        for (var k = 0; k < opened.length; k++) if (opened[k]) pick = opened[k];
+      }
+      var nFile = opened.filter(Boolean).length;
+      if (pick || folders) dropPlaceholder();
+      if (pick) activate(pick);
+      done = true;
+      if (folders || nFile) toast("已恢复上次打开的" + sessionWhat(folders, nFile));
+    } catch (e) {
+      /* 保留空白文档 */
+    } finally {
+      state.hydrating = false;
+    }
+    if (done) writeNativeSession();
+  }
+
+  function rememberSession() {
+    if (state.hydrating) return;
+    if (ND.desktop.inDesktop()) {
+      clearTimeout(rememberSession._t);
+      rememberSession._t = setTimeout(writeNativeSession, 200);
+      return;
+    }
+    clearTimeout(rememberSession._t);
+    rememberSession._t = setTimeout(persistSessionNow, 200);
+  }
+
+  function persistSessionNow() {
+    if (state.hydrating || !window.isSecureContext || !window.indexedDB) return Promise.resolve();
+    var gen = ++persistGen;
+    return collectSession().then(function (data) {
+      if (gen !== persistGen) return;
+      return saveSession(data);
+    }).catch(function () {});
+  }
+
+  async function restoreHandles(list, kind) {
+    var opened = [];
+    var left = [];
+    var count = 0;
+    for (var i = 0; i < list.length; i++) {
+      var handle = list[i];
+      if (!handle || (kind === "dir" && handle.kind === "file") || (kind === "file" && handle.kind === "directory")) {
+        opened.push(null);
+        continue;
+      }
+      var perm = await permissionOf(handle, false);
+      if (perm === "granted" || perm === "read") {
+        var ok = kind === "dir" ? await reviveRoot(handle) : await openHandle(handle, null, handle.name, true);
+        if (ok) count++;
+        opened.push(kind === "file" ? ok : null);
+      } else if (perm === "prompt") {
+        left.push(handle);
+        opened.push(null);
+      } else opened.push(null);
+      await yieldUI();
+    }
+    return { opened: opened, left: left, count: count };
+  }
+
+  async function confirmRestore() {
+    if (confirmRestore.busy) return;
+    confirmRestore.busy = true;
+    var pending = state.pendingRestore || { roots: [], files: [] };
+    var roots = pending.roots.slice();
+    var files = pending.files.slice();
+    var leftRoots = [];
+    var leftFiles = [];
+    var folders = 0;
+    var opened = 0;
+    try {
+      for (var i = 0; i < roots.length; i++) {
+        var perm = await permissionOf(roots[i], true);
+        if (perm === "granted" || perm === "read") {
+          if (await reviveRoot(roots[i])) folders++;
+        } else if (perm !== "denied") leftRoots.push(roots[i]);
+      }
+      for (var j = 0; j < files.length; j++) {
+        var fp = await permissionOf(files[j], true);
+        if (fp === "granted" || fp === "read") {
+          if (await openHandle(files[j], null, files[j].name, true)) opened++;
+        } else if (fp !== "denied") leftFiles.push(files[j]);
+      }
+    } finally {
+      confirmRestore.busy = false;
+    }
+    pending.roots = leftRoots;
+    pending.files = leftFiles;
+    if (folders || opened) dropPlaceholder();
+    paintRestoreBanner();
+    rememberSession();
+    if (folders || opened) toast("已恢复" + sessionWhat(folders, opened));
+    else if (leftRoots.length || leftFiles.length) toast("浏览器还没有允许访问，请再点一次恢复");
+    else toast("这些文件夹或文件已经不能访问");
+  }
+
+  function forgetRestore() {
+    state.pendingRestore = { roots: [], files: [] };
+    paintRestoreBanner();
+    rememberSession();
+    toast("已不再恢复这些文件夹和文件");
+  }
+
+  function sessionWhat(folders, files) {
+    var parts = [];
+    if (folders) parts.push(folders + " 个文件夹");
+    if (files) parts.push(files + " 个文件");
+    return parts.length ? " " + parts.join("、") : "";
+  }
+
+  async function restoreSession() {
+    var saved = null;
+    var committed = false;
+    try {
+      if (!window.isSecureContext || !window.indexedDB) return;
+      saved = await loadSession();
+      if (!saved || (!(saved.roots && saved.roots.length) && !(saved.files && saved.files.length))) return;
+      var roots = await dedupeHandles(saved.roots || []);
+      var files = await dedupeHandles(saved.files || []);
+      var folderResult = await restoreHandles(roots, "dir");
+      var fileResult = await restoreHandles(files, "file");
+      state.pendingRestore.roots = folderResult.left;
+      state.pendingRestore.files = fileResult.left;
+      var pick = fileResult.opened[saved.active] || null;
+      if (!pick) {
+        for (var i = 0; i < fileResult.opened.length; i++) if (fileResult.opened[i]) pick = fileResult.opened[i];
+      }
+      if (pick || folderResult.count) dropPlaceholder();
+      if (pick) activate(pick);
+      committed = true;
+      if (folderResult.count || fileResult.opened.filter(Boolean).length) {
+        toast("已恢复上次打开的" + sessionWhat(folderResult.count, fileResult.opened.filter(Boolean).length));
+      }
+    } catch (e) {
+      /* 恢复失败时保留空白文档，也不覆盖原来的记录 */
+    } finally {
+      state.hydrating = false;
+    }
+    paintRestoreBanner();
+    if (committed) persistSessionNow();
+  }
+
   function boot() {
     buildMenus();
     buildToolbar();
@@ -2365,12 +2971,24 @@
     applySettings();
     if (!window.isSecureContext) {
       var banner = $("#banner");
-      banner.textContent = "现在是直接打开的本地页面，可以浏览和编辑。按 Ctrl+S 会把文件下载下来。若要覆盖原始文件，请用 Chrome 或 Edge 通过 http://localhost 打开这一页，再点「打开文件夹」。点击本条可关闭。";
+      banner.dataset.kind = "local";
+      banner.textContent = "现在是直接打开的本地页面，可以浏览和编辑。按 Ctrl+S 会把文件下载下来。若要覆盖原始文件，请用 Chrome 或 Edge 通过 http://localhost 打开这一页，再点「打开文件夹」。只有通过网址打开时，才会记住上次的文件夹和文件。点击本条可关闭。";
       banner.classList.remove("hidden");
     }
+    state.hydrating = true;
     addDoc(createDoc("未命名-1"));
     window.__ndd = { state: state, editor: editor, settings: settings, run: run, ND: ND };
     window.addEventListener("error", function (e) { toast(e.message || "脚本错误"); });
+    if (ND.desktop.inDesktop()) {
+      restoreNativeSession();
+      ND.desktop.onWindowClose(function () {
+        var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
+        if (!dirty) return true;
+        return ask("退出", "有未保存的修改。退出后这些修改会丢掉。", [["cancel", "留下"], ["ok", "仍要退出", true]]).then(function (ans) {
+          return ans === "ok";
+        });
+      });
+    } else restoreSession();
   }
 
   boot();

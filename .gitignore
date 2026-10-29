@@ -4,3 +4,12 @@ desktop.ini
 *.log
 .idea/
 .vscode/
+node_modules/
+dist/
+bin/
+.storage/
+resources/
+icons/
+.tmp/
+js/neutralino.js
+js/neutralino.d.ts

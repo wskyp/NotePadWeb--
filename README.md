@@ -12,7 +12,36 @@
 
 推荐用本地静态服务器打开（例如 `python -m http.server`），地址会是 `http://localhost`。这时浏览器把页面当成安全上下文，**打开文件夹**可以读写你选中的目录，`Ctrl+S` 能写回原文件。
 
-直接双击 `index.html`（`file://`）也可以编辑。这种情况下浏览器通常不允许写回原路径，保存会下载一份副本。
+用 Chrome 或 Edge 通过 `http://localhost` 或 `https://` 打开时，文件夹和当时打开的文件会记在这台浏览器的 IndexedDB 里。下次访问同一个网址，如果许可还在，会自动重新打开；如果浏览器要求再确认，页面顶部会出现「恢复」。记录的是文件句柄，不是一份文字副本：没保存的修改不会留到下次，重新打开的是磁盘上的内容。拖进页面、或不用系统文件框而用普通选择框打开的内容，没有可再次使用的句柄，关页后不会回来。换浏览器、换电脑或清除站点数据后，记录也会消失。
+
+直接双击 `index.html`（`file://`）也可以编辑。这种情况下浏览器通常不允许写回原路径，保存会下载一份副本，也不会记住上次打开的文件夹。
+
+## 桌面版
+
+桌面程序用 [Neutralino](https://neutralino.js.org/) 包同一套页面。Windows 和 Linux 都走本机文件：打开文件夹拿到真实路径，`Ctrl+S` 写回原文件，下次启动会按路径重新打开。浏览器里打开 `index.html` 的用法仍然保留。
+
+需要 Node.js。
+
+```bash
+npm install
+npm run setup
+npm run desktop
+```
+
+`npm run setup` 下载各平台的 Neutralino 运行时。`npm run desktop` 打开桌面窗口。
+
+打包：
+
+```bash
+npm run build
+```
+
+产物不在这个仓库里，而在上一级目录的 `NotePadWeb-release`。在 Windows 上打包也会同时得到 Linux 包，因为 Linux 运行时是现成的二进制，和同一份 `resources.neu` 放在一起。打包结束后，仓库里的下载文件和中间目录会被清掉。
+
+- `NotePadWeb-release/NotePadWeb-windows.zip`：解压后运行 `NotePadWeb-win_x64.exe`。Windows 10/11 一般已经带有 WebView2。
+- `NotePadWeb-release/NotePadWeb-linux.zip`：解压后执行 `chmod +x NotePadWeb-linux_x64 && ./NotePadWeb-linux_x64`。桌面环境里要有 GTK3 和 WebKitGTK（Debian/Ubuntu 上是 `libgtk-3-0` 与 `libwebkit2gtk-4.1-0` 或 `libwebkit2gtk-4.0-37`）。很多桌面发行版已经有这两样。很老的发行版或没有图形桌面的机器不在支持范围内。
+
+页面资源打进 `resources.neu`，和对应平台的小运行时放在一起。运行时本身不包含网页引擎，所以 Linux 包只有几兆，引擎用系统里的那一份。
 
 ## 能做什么
 
@@ -81,8 +110,14 @@ js/markdown.js      Markdown 转 HTML
 js/codec.js         编码、换行、MD5、SHA-256
 js/gbk.js           生成好的 GBK 编码表，不要手改
 js/diff.js          行对比；大文件用唯一行作锚点，短行再做字符级差异
+js/native.js        桌面版的本机文件接口；浏览器里打开时不生效
 js/app.js           菜单、标签、文件夹、设置和各种命令
+neutralino.config.json  桌面窗口和打包配置
 tools/gen_gbk.py    重新生成 js/gbk.js
+tools/gen_icon.js   打包时生成窗口图标
+tools/stage_frontend.js  打包前把页面收进临时目录
+tools/pack_desktop.js    把 Windows / Linux 包放到仓库外
+tools/clean.js      清掉打包留下的中间文件
 ```
 
 脚本都挂在全局对象 `ND` 上，没有打包器。`index.html` 底部的加载顺序就是模块依赖顺序。
