@@ -710,8 +710,11 @@ var ND = ND || {};
     var viewLines = Math.max(1, this.view.clientHeight / this.lineHeight);
     var top = (this.view.scrollTop / this.lineHeight) / Math.max(1, total) * h;
     var vh = Math.max(8, viewLines / Math.max(1, total) * h);
+    if (top < 0) top = 0;
+    if (top > h - 8) top = Math.max(0, h - 8);
+    if (top + vh > h) vh = h - top;
     ctx.strokeStyle = "rgba(80,140,220,.9)";
-    ctx.strokeRect(0.5, top + 0.5, w - 1, vh);
+    ctx.strokeRect(0.5, top + 0.5, w - 1, Math.max(1, vh - 1));
     void caretV;
   };
 

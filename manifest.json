@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "NotePadWeb--",
+  "version": "1.0.0",
+  "description": "用来编辑文本。可以打开文件夹和文件，保存回原文件，并记住上次打开的内容。",
+  "action": {
+    "default_title": "打开 NotePadWeb--",
+    "default_icon": {
+      "16": "ext/icon16.png",
+      "32": "ext/icon32.png",
+      "48": "ext/icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "js/ext-background.js"
+  },
+  "icons": {
+    "16": "ext/icon16.png",
+    "32": "ext/icon32.png",
+    "48": "ext/icon48.png",
+    "128": "ext/icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "offline_enabled": true
+}

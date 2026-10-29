@@ -2046,6 +2046,7 @@
     var d = active();
     var m = d && d.model;
     if (!act) return;
+    try { if (ND.track) ND.track.action(act); } catch (err) {}
     if (act.indexOf("theme:") === 0) { settings.theme = act.slice(6); applySettings(); return; }
     if (act.indexOf("lang:") === 0) { if (d) { d.language = act.slice(5); editor.schedule(); paintStatus(); } return; }
     if (act.indexOf("enc:") === 0) { if (d) { d.encoding = act.slice(4); d.model.gen++; paintStatus(); paintDirty(); } return; }
@@ -2204,7 +2205,9 @@
         var intro = "作者：汪继鹏\n版本：v1.0\n\n用来编辑文本。可以同时打开多个文件和文件夹，按语言做语法高亮，也能查找替换、切换编码（UTF-8、GBK、GB18030、UTF-16 LE）、预览 Markdown、查看和修改十六进制，以及对比文件和文件夹。Markdown 会按标题、列表、表格和代码块排版。";
         var how = ND.desktop.inDesktop()
           ? "\n在这个桌面窗口里，保存会写回原来的文件。下次启动会重新打开上次的文件夹和文件。"
-          : "\n用 Chrome 或 Edge 通过 localhost 或 https 打开时，保存可以写回原文件，并记住上次打开的文件夹和文件。直接双击 index.html 时，保存会下载一份副本。";
+          : ND.desktop.inExtension()
+            ? "\n在这个 Chrome 插件里，保存可以写回原文件，并记住上次打开的文件夹和文件。"
+            : "\n用 Chrome 或 Edge 通过 localhost 或 https 打开时，保存可以写回原文件，并记住上次打开的文件夹和文件。直接双击 index.html 时，保存会下载一份副本。";
         ask("关于 NotePadWeb--", intro + how, [["ok", "关闭", true]]);
       }
     };
@@ -2978,6 +2981,10 @@
     state.hydrating = true;
     addDoc(createDoc("未命名-1"));
     window.__ndd = { state: state, editor: editor, settings: settings, run: run, ND: ND };
+    if (ND.desktop.inExtension()) {
+      try { chrome.runtime.sendMessage({ type: "editor-ready" }); } catch (err) { /* 后台未就绪时仍可继续编辑 */ }
+      try { if (ND.track) ND.track.start(); } catch (err) {}
+    }
     window.addEventListener("error", function (e) { toast(e.message || "脚本错误"); });
     if (ND.desktop.inDesktop()) {
       restoreNativeSession();

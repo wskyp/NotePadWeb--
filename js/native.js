@@ -10,6 +10,14 @@ ND.desktop = (function () {
     return typeof Neutralino !== "undefined" && !!window.NL_PORT;
   }
 
+  function inExtension() {
+    try {
+      return location.protocol === "chrome-extension:" && typeof chrome !== "undefined" && !!(chrome.runtime && chrome.runtime.id);
+    } catch (err) {
+      return false;
+    }
+  }
+
   function ready() {
     if (!inDesktop()) return Promise.resolve();
     if (!started) {
@@ -275,6 +283,7 @@ ND.desktop = (function () {
 
   return {
     inDesktop: inDesktop,
+    inExtension: inExtension,
     ready: ready,
     onWindowClose: onWindowClose,
     invoke: invoke,

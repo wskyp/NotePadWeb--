@@ -39,7 +39,7 @@ npm run build
 产物不在这个仓库里，而在上一级目录的 `NotePadWeb-release`。在 Windows 上打包也会同时得到 Linux 包，因为 Linux 运行时是现成的二进制，和同一份 `resources.neu` 放在一起。打包结束后，仓库里的下载文件和中间目录会被清掉。
 
 - `NotePadWeb-release/NotePadWeb-windows.zip`：解压后运行 `NotePadWeb-win_x64.exe`。Windows 10/11 一般已经带有 WebView2。
-- `NotePadWeb-release/NotePadWeb-linux.zip`：解压后执行 `chmod +x NotePadWeb-linux_x64 && ./NotePadWeb-linux_x64`。桌面环境里要有 GTK3 和 WebKitGTK（Debian/Ubuntu 上是 `libgtk-3-0` 与 `libwebkit2gtk-4.1-0` 或 `libwebkit2gtk-4.0-37`）。很多桌面发行版已经有这两样。很老的发行版或没有图形桌面的机器不在支持范围内。
+- `NotePadWeb-release/NotePadWeb`：Linux 上的一个可执行文件。拷到 CentOS 7 后执行 `chmod +x NotePadWeb && ./NotePadWeb`。它自带 `libpng16` 和较新的 `libstdc++`，并关掉 WebKit 的 OpenGL 合成，避免没有显卡时因为缺少 `swrast_dri.so` 起不了窗口。系统里仍要有 GTK3 和 WebKitGTK（CentOS 7：`sudo yum install gtk3`，以及 EPEL 的 `webkitgtk4`）。Debian/Ubuntu 上对应 `libgtk-3-0` 与 `libwebkit2gtk-4.1-0` 或 `libwebkit2gtk-4.0-37`。需要已经登录的图形会话；没有显示器、也没有设置 `DISPLAY` 的机器开不出窗口。
 
 页面资源打进 `resources.neu`，和对应平台的小运行时放在一起。运行时本身不包含网页引擎，所以 Linux 包只有几兆，引擎用系统里的那一份。
 
@@ -117,6 +117,7 @@ tools/gen_gbk.py    重新生成 js/gbk.js
 tools/gen_icon.js   打包时生成窗口图标
 tools/stage_frontend.js  打包前把页面收进临时目录
 tools/pack_desktop.js    把 Windows / Linux 包放到仓库外
+tools/centos7-libs/      CentOS 7 随包的 libpng16、libstdc++、libgcc_s
 tools/clean.js      清掉打包留下的中间文件
 ```
 

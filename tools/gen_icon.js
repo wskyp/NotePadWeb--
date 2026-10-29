@@ -119,6 +119,7 @@ function ico(sizes) {
 }
 
 var dir = path.join(__dirname, "..", "resources", "icons");
+var extDir = path.join(__dirname, "..", "ext");
 fs.mkdirSync(dir, { recursive: true });
 var small = png(32);
 var mid = png(128);
@@ -127,4 +128,9 @@ fs.writeFileSync(path.join(dir, "32x32.png"), small);
 fs.writeFileSync(path.join(dir, "128x128.png"), mid);
 fs.writeFileSync(path.join(dir, "128x128@2x.png"), big);
 fs.writeFileSync(path.join(dir, "icon.ico"), ico([32, 48, 64, 128, 256]));
+fs.mkdirSync(extDir, { recursive: true });
+fs.writeFileSync(path.join(extDir, "icon16.png"), png(16));
+fs.writeFileSync(path.join(extDir, "icon32.png"), small);
+fs.writeFileSync(path.join(extDir, "icon48.png"), png(48));
+fs.writeFileSync(path.join(extDir, "icon128.png"), mid);
 console.log("icons written");
