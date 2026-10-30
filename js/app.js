@@ -19,10 +19,15 @@
     findJob: 0,
     treeHidden: 0,
     hydrating: false,
-    pendingRestore: { roots: [], files: [] }
+    pendingRestore: { roots: [], files: [] },
+    csv: null,
+    csvChart: null,
+    csvQuery: null,
+    csvCols: null
   };
   var settings = loadSettings();
   ND.macro = { rec: false, play: false, ops: [] };
+  var echartsLoading = null;
 
   hookProto("insertText");
   hookProto("backspace");
@@ -173,7 +178,9 @@
       ["Base64", "", "base64"],
       ["URL 编解码", "", "url"],
       ["JSON 格式化", "", "jsonfmt"],
+      ["JSON 压缩", "", "jsonmin"],
       ["XML 格式化", "", "xmlfmt"],
+      ["CSV 分析", "", "csvAnalyze"],
       ["统计", "", "stats"]
     ]},
     { name: "对比", items: [
@@ -213,7 +220,8 @@
       tabSize: 4, insertSpaces: false, autoIndent: true,
       autoPair: true, autoWord: true,
       showWs: false, wrap: false, minimap: true, folding: true,
-      sidebar: true, toolbar: true, statusbar: true, mdView: "split"
+      sidebar: true, toolbar: true, statusbar: true, mdView: "split",
+      mdSplit: 52, csvSplit: 52
     };
     try {
       var saved = JSON.parse(localStorage.getItem("notepadmm.settings") || "null");
@@ -341,6 +349,7 @@
     editor.wrap = !!settings.wrap && !doc.noWrap;
     editor.focus();
     closeCompare();
+    closeCsvPanel();
     renderTabs();
     renderSide();
     paintStatus();
@@ -1697,16 +1706,32 @@
     }
   }
 
+  function clampSplit(value, fallback) {
+    var n = Number(value);
+    if (!isFinite(n)) n = fallback;
+    return Math.max(20, Math.min(80, n));
+  }
+
+  function applySplitWidths() {
+    var stack = $("#stack");
+    if (stack) stack.style.setProperty("--md-split", clampSplit(settings.mdSplit, 52) + "%");
+    var csvBody = document.querySelector(".csv-body");
+    if (csvBody) csvBody.style.setProperty("--csv-split", clampSplit(settings.csvSplit, 52) + "%");
+  }
+
   function refreshMd() {
     var d = active();
     var mode = settings.mdView || "off";
     var comparing = !$("#compare").classList.contains("hidden");
-    var show = !!(d && d.language === "markdown" && !d.hex && !editor.hexOn && mode !== "off" && !comparing);
+    var csvOpen = $("#csvPanel") && !$("#csvPanel").classList.contains("hidden");
+    var show = !!(d && d.language === "markdown" && !d.hex && !editor.hexOn && mode !== "off" && !comparing && !csvOpen);
     var stack = $("#stack");
     stack.classList.toggle("md-split", show && mode === "split");
     stack.classList.toggle("md-preview", show && mode === "preview");
     var pane = $("#mdPreview");
     if (pane) pane.classList.toggle("hidden", !show);
+    var mdResizer = $("#mdResizer");
+    if (mdResizer) mdResizer.classList.toggle("hidden", !(show && mode === "split"));
     document.querySelectorAll('.tb[data-act="md:toggle"]').forEach(function (el) { el.classList.toggle("on", show); });
     document.querySelectorAll("#mdPreview [data-mdview]").forEach(function (btn) {
       btn.classList.toggle("on", btn.getAttribute("data-mdview") === mode);
@@ -1857,6 +1882,448 @@
     } catch (e) { toast("JSON 无法解析：" + e.message); }
   }
 
+  function minifyJSON() {
+    var d = active();
+    if (!d || editor.hexOn) return;
+    try {
+      var obj = JSON.parse(d.model.text());
+      d.model.setText(JSON.stringify(obj));
+      d.model.gen = 1;
+      d.model.cleanGen = 0;
+      d.language = "json";
+      toast("已压缩 JSON");
+    } catch (e) { toast("JSON 无法解析：" + e.message); }
+  }
+
+  function ensureEcharts() {
+    if (window.echarts) return Promise.resolve(window.echarts);
+    if (echartsLoading) return echartsLoading;
+    echartsLoading = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "js/echarts.min.js";
+      s.onload = function () {
+        if (window.echarts) resolve(window.echarts);
+        else reject(new Error("ECharts 未就绪"));
+      };
+      s.onerror = function () { echartsLoading = null; reject(new Error("无法加载图表库")); };
+      document.head.appendChild(s);
+    });
+    return echartsLoading;
+  }
+
+  function closeCsvPanel() {
+    var pane = $("#csvPanel");
+    if (pane) pane.classList.add("hidden");
+    if (state.csvChart) {
+      try { state.csvChart.dispose(); } catch (err) {}
+      state.csvChart = null;
+    }
+    refreshMd();
+    editor.schedule();
+  }
+
+  function csvOptionHtml(list, selected) {
+    return (list || []).map(function (name) {
+      return "<option value=\"" + ND.esc(name) + "\"" + (name === selected ? " selected" : "") + ">" + ND.esc(name) + "</option>";
+    }).join("");
+  }
+
+  function defaultCsvQuery(parsed, inferred) {
+    var cats = (inferred.categorical && inferred.categorical.length) ? inferred.categorical : parsed.headers;
+    var nums = inferred.numeric || [];
+    return {
+      dims: cats.length ? [cats[0]] : [],
+      metrics: [{
+        field: nums[0] || (parsed.headers[0] || ""),
+        agg: nums.length ? "sum" : "count"
+      }],
+      filters: []
+    };
+  }
+
+  function syncCsvQueryFromDom() {
+    if (!state.csvQuery) state.csvQuery = { dims: [], metrics: [], filters: [] };
+    state.csvQuery.dims = Array.prototype.map.call(document.querySelectorAll("#csvDims [data-dim]"), function (el) {
+      return el.value;
+    }).filter(Boolean);
+    state.csvQuery.metrics = Array.prototype.map.call(document.querySelectorAll("#csvMetrics .csv-chip"), function (chip) {
+      var field = chip.querySelector("[data-metric-field]");
+      var agg = chip.querySelector("[data-metric-agg]");
+      return {
+        field: field ? field.value : "",
+        agg: agg ? agg.value : "count"
+      };
+    });
+    if (!state.csvQuery.metrics.length) state.csvQuery.metrics = [{ field: "", agg: "count" }];
+    state.csvQuery.filters = Array.prototype.map.call(document.querySelectorAll("#csvFilters .csv-chip"), function (chip) {
+      var field = chip.querySelector("[data-filter-field]");
+      var op = chip.querySelector("[data-filter-op]");
+      var value = chip.querySelector("[data-filter-value]");
+      return {
+        field: field ? field.value : "",
+        op: op ? op.value : "eq",
+        value: value ? value.value : ""
+      };
+    }).filter(function (f) { return f.field; });
+  }
+
+  function renderCsvQuery() {
+    var headers = (state.csv && state.csv.headers) || [];
+    var cols = state.csvCols || { categorical: headers, numeric: headers };
+    var q = state.csvQuery || defaultCsvQuery(state.csv || { headers: headers }, cols);
+    state.csvQuery = q;
+    var dimHost = $("#csvDims");
+    var metricHost = $("#csvMetrics");
+    var filterHost = $("#csvFilters");
+    if (!dimHost || !metricHost || !filterHost) return;
+    if (!q.dims.length) q.dims = headers.length ? [headers[0]] : [];
+    dimHost.innerHTML = q.dims.map(function (dim, idx) {
+      return '<div class="csv-chip"><select data-dim>' + csvOptionHtml(headers, dim) +
+        '</select><button type="button" class="csv-x" data-csv-del="dim" data-i="' + idx + '" title="删除">×</button></div>';
+    }).join("");
+    metricHost.innerHTML = q.metrics.map(function (metric, idx) {
+      var aggOpts = Object.keys(ND.Csv.AGG_LABELS).map(function (id) {
+        return "<option value=\"" + id + "\"" + (id === metric.agg ? " selected" : "") + ">" + ND.Csv.AGG_LABELS[id] + "</option>";
+      }).join("");
+      var fieldOpts = '<option value=""' + (!metric.field ? " selected" : "") + '>(行计数)</option>' +
+        csvOptionHtml(headers, metric.field);
+      return '<div class="csv-chip"><select data-metric-agg>' + aggOpts +
+        '</select><select data-metric-field>' + fieldOpts +
+        '</select><button type="button" class="csv-x" data-csv-del="metric" data-i="' + idx + '" title="删除">×</button></div>';
+    }).join("");
+    filterHost.innerHTML = q.filters.map(function (filter, idx) {
+      var needValue = filter.op !== "empty" && filter.op !== "not_empty";
+      var opOpts = ND.Csv.FILTER_OPS.map(function (op) {
+        return "<option value=\"" + op.id + "\"" + (op.id === (filter.op || "eq") ? " selected" : "") + ">" + op.label + "</option>";
+      }).join("");
+      return '<div class="csv-chip"><select data-filter-field>' + csvOptionHtml(headers, filter.field) +
+        '</select><select data-filter-op>' + opOpts +
+        '</select><input data-filter-value type="text" placeholder="值"' + (needValue ? "" : " disabled") +
+        ' value="' + ND.esc(filter.value || "") + '">' +
+        '<button type="button" class="csv-x" data-csv-del="filter" data-i="' + idx + '" title="删除">×</button></div>';
+    }).join("") || '<span class="csv-summary">无（可选）</span>';
+  }
+
+  function renderCsvTable(parsed, filteredRows) {
+    var table = $("#csvTable");
+    if (!table || !parsed) return;
+    var headers = parsed.headers || [];
+    var rows = filteredRows || parsed.rows || [];
+    var maxRows = Math.min(rows.length, 500);
+    var html = "<thead><tr>" + headers.map(function (h) {
+      return "<th>" + ND.esc(h) + "</th>";
+    }).join("") + "</tr></thead><tbody>";
+    for (var i = 0; i < maxRows; i++) {
+      html += "<tr>";
+      for (var c = 0; c < headers.length; c++) {
+        html += "<td>" + ND.esc(rows[i][headers[c]] == null ? "" : rows[i][headers[c]]) + "</td>";
+      }
+      html += "</tr>";
+    }
+    html += "</tbody>";
+    table.innerHTML = html;
+  }
+
+  function csvAccent() {
+    return getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#2b78c5";
+  }
+
+  function csvIsDarkTheme() {
+    var t = document.body.dataset.theme || "";
+    return t === "dark" || t === "monokai";
+  }
+
+  function csvPalette() {
+    return [csvAccent(), "#5b8ff9", "#61ddaa", "#f6bd16", "#7262fd", "#78d3f8", "#9661bc", "#f6903d", "#e8684a", "#6dc8ec"];
+  }
+
+  function csvChartTitle(result) {
+    var dims = result.dims.length ? result.dims.join(", ") : "(无)";
+    var metrics = result.metrics.map(ND.Csv.metricLabel).join(", ");
+    return "维度 " + dims + " · 指标 " + metrics;
+  }
+
+  function paintCsvChart() {
+    var pane = $("#csvPanel");
+    var host = $("#csvChart");
+    if (!pane || pane.classList.contains("hidden") || !host || !state.csv || !window.echarts) return;
+    syncCsvQueryFromDom();
+    var type = ($("#csvChartType") && $("#csvChartType").value) || "bar";
+    var result = ND.Csv.aggregate(state.csv, state.csvQuery);
+    var filtered = ND.Csv.applyFilters(state.csv.rows, state.csvQuery.filters);
+    renderCsvTable(state.csv, filtered);
+    var summary = $("#csvSummary");
+    if (summary) {
+      summary.textContent = "过滤 " + result.filteredCount + "/" + result.totalCount +
+        " 行 · 分组 " + result.groups.length;
+    }
+    if (!state.csvChart) state.csvChart = window.echarts.init(host);
+    else state.csvChart.resize();
+    var dark = csvIsDarkTheme();
+    var text = dark ? "#ddd" : "#444";
+    var muted = dark ? "#999" : "#888";
+    var split = dark ? "rgba(255,255,255,.12)" : "rgba(0,0,0,.08)";
+    var palette = csvPalette();
+    var title = csvChartTitle(result);
+    var option;
+    var legend = result.series.length > 1 ? {
+      type: "scroll", top: 28, textStyle: { color: muted, fontSize: 11 }
+    } : undefined;
+
+    if (type === "pie" || type === "doughnut") {
+      var pieSeries = result.series[0] || { values: [] };
+      option = {
+        backgroundColor: "transparent",
+        color: palette,
+        title: { text: title, left: 8, top: 4, textStyle: { color: text, fontSize: 12, fontWeight: 600 } },
+        tooltip: { trigger: "item" },
+        series: [{
+          type: "pie",
+          radius: type === "doughnut" ? ["40%", "68%"] : ["28%", "68%"],
+          center: ["50%", "56%"],
+          itemStyle: { borderRadius: 4, borderColor: dark ? "#222" : "#fff", borderWidth: 2 },
+          label: { color: text },
+          data: result.labels.map(function (name, i) {
+            return { name: name, value: pieSeries.values[i] };
+          })
+        }]
+      };
+    } else if (type === "heatmap") {
+      var heatLabels = result.labels;
+      var heatY = result.yLabels.length ? result.yLabels : ["全部"];
+      var heatData = result.heat.slice();
+      if (!heatData.length && result.series[0]) {
+        heatData = result.series[0].values.map(function (v, i) { return [i, 0, v]; });
+      }
+      var heatMax = 0;
+      heatData.forEach(function (cell) { if (cell[2] > heatMax) heatMax = cell[2]; });
+      option = {
+        backgroundColor: "transparent",
+        title: { text: title, left: 8, top: 4, textStyle: { color: text, fontSize: 12, fontWeight: 600 } },
+        tooltip: { position: "top" },
+        grid: { left: 72, right: 28, top: 48, bottom: 56 },
+        xAxis: {
+          type: "category", data: heatLabels,
+          axisLabel: { color: muted, hideOverlap: true },
+          splitArea: { show: true }
+        },
+        yAxis: {
+          type: "category", data: heatY,
+          axisLabel: { color: muted }
+        },
+        visualMap: {
+          min: 0, max: heatMax || 1, calculable: true, orient: "horizontal",
+          left: "center", bottom: 4, textStyle: { color: muted }
+        },
+        series: [{
+          type: "heatmap",
+          data: heatData,
+          label: { show: heatLabels.length * heatY.length <= 80, color: text },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.3)" } }
+        }]
+      };
+    } else if (type === "scatter") {
+      var sx = result.series[0];
+      var sy = result.series[1] || result.series[0];
+      option = {
+        backgroundColor: "transparent",
+        color: palette,
+        title: { text: title, left: 8, top: 4, textStyle: { color: text, fontSize: 12, fontWeight: 600 } },
+        tooltip: { trigger: "item" },
+        grid: { left: 52, right: 18, top: 42, bottom: 48 },
+        xAxis: {
+          type: "value", name: sx ? sx.name : "",
+          axisLabel: { color: muted }, splitLine: { lineStyle: { color: split } }
+        },
+        yAxis: {
+          type: "value", name: sy ? sy.name : "",
+          axisLabel: { color: muted }, splitLine: { lineStyle: { color: split } }
+        },
+        series: [{
+          type: "scatter",
+          symbolSize: 10,
+          data: result.labels.map(function (name, i) {
+            return {
+              value: [sx ? sx.values[i] : 0, sy ? sy.values[i] : 0],
+              name: name
+            };
+          })
+        }]
+      };
+    } else if (type === "radar") {
+      var maxMap = result.labels.map(function (_, i) {
+        var m = 0;
+        result.series.forEach(function (s) { if (s.values[i] > m) m = s.values[i]; });
+        return m || 1;
+      });
+      option = {
+        backgroundColor: "transparent",
+        color: palette,
+        title: { text: title, left: 8, top: 4, textStyle: { color: text, fontSize: 12, fontWeight: 600 } },
+        legend: legend,
+        tooltip: {},
+        radar: {
+          indicator: result.labels.map(function (name, i) {
+            return { name: name, max: maxMap[i] * 1.2 || 1 };
+          }),
+          axisName: { color: muted }
+        },
+        series: [{
+          type: "radar",
+          data: result.series.map(function (s) {
+            return { name: s.name, value: s.values };
+          })
+        }]
+      };
+    } else {
+      var horizontal = type === "barH";
+      var stacked = type === "barStack";
+      var isLine = type === "line" || type === "area";
+      var categoryAxis = {
+        type: "category",
+        data: result.labels,
+        axisLabel: { color: muted, hideOverlap: true },
+        axisLine: { lineStyle: { color: split } }
+      };
+      var valueAxis = {
+        type: "value",
+        axisLabel: { color: muted },
+        splitLine: { lineStyle: { color: split } }
+      };
+      option = {
+        backgroundColor: "transparent",
+        color: palette,
+        title: { text: title, left: 8, top: 4, textStyle: { color: text, fontSize: 12, fontWeight: 600 } },
+        legend: legend,
+        tooltip: { trigger: "axis" },
+        grid: { left: horizontal ? 88 : 52, right: 18, top: legend ? 56 : 42, bottom: 48 },
+        xAxis: horizontal ? valueAxis : categoryAxis,
+        yAxis: horizontal ? categoryAxis : valueAxis,
+        series: result.series.map(function (s) {
+          return {
+            name: s.name,
+            type: isLine ? "line" : "bar",
+            stack: stacked ? "total" : undefined,
+            data: s.values,
+            smooth: isLine,
+            showSymbol: result.labels.length <= 24,
+            barMaxWidth: 28,
+            areaStyle: type === "area" ? { opacity: 0.15 } : undefined,
+            lineStyle: isLine ? { width: 2.2 } : undefined,
+            itemStyle: (!isLine && !stacked) ? { borderRadius: horizontal ? [0, 3, 3, 0] : [3, 3, 0, 0] } : undefined
+          };
+        })
+      };
+    }
+    state.csvChart.setOption(option, true);
+    if (result.truncated) toast("分组或系列较多，图表已截断显示");
+  }
+
+  function refreshCsvPanel(forceParse) {
+    var pane = $("#csvPanel");
+    if (!pane || pane.classList.contains("hidden")) return;
+    var d = active();
+    if (!d || editor.hexOn) {
+      toast("当前没有可分析的文本");
+      closeCsvPanel();
+      return;
+    }
+    if (forceParse || !state.csv) {
+      var parsed = ND.Csv.parse(d.model.text());
+      if (parsed.error) {
+        toast(parsed.error);
+        closeCsvPanel();
+        return;
+      }
+      if (!parsed.headers.length) {
+        toast("没有表头，无法分析");
+        closeCsvPanel();
+        return;
+      }
+      state.csv = parsed;
+      state.csvCols = ND.Csv.inferColumns(parsed);
+      state.csvQuery = defaultCsvQuery(parsed, state.csvCols);
+      renderCsvQuery();
+      if (parsed.truncated) toast("行数较多，表格最多显示 " + ND.Csv.ROW_CAP + " 行");
+    } else {
+      syncCsvQueryFromDom();
+      renderCsvQuery();
+    }
+    ensureEcharts().then(function () {
+      paintCsvChart();
+    }).catch(function (err) {
+      toast(err && err.message ? err.message : "图表加载失败");
+    });
+  }
+
+  function onCsvQueryClick(e) {
+    var add = e.target.closest("[data-csv-add]");
+    var del = e.target.closest("[data-csv-del]");
+    if (!add && !del) return;
+    syncCsvQueryFromDom();
+    var q = state.csvQuery;
+    var headers = (state.csv && state.csv.headers) || [];
+    if (add) {
+      var kind = add.getAttribute("data-csv-add");
+      if (kind === "dim") {
+        if (q.dims.length >= 3) { toast("最多 3 个维度"); return; }
+        q.dims.push(headers[Math.min(q.dims.length, headers.length - 1)] || headers[0] || "");
+      } else if (kind === "metric") {
+        if (q.metrics.length >= 6) { toast("最多 6 个指标"); return; }
+        var nums = (state.csvCols && state.csvCols.numeric) || headers;
+        q.metrics.push({ field: nums[0] || headers[0] || "", agg: nums.length ? "sum" : "count" });
+      } else if (kind === "filter") {
+        q.filters.push({ field: headers[0] || "", op: "eq", value: "" });
+      }
+    }
+    if (del) {
+      var which = del.getAttribute("data-csv-del");
+      var idx = Number(del.getAttribute("data-i"));
+      if (which === "dim") {
+        q.dims.splice(idx, 1);
+        if (!q.dims.length && headers.length) q.dims.push(headers[0]);
+      } else if (which === "metric") {
+        q.metrics.splice(idx, 1);
+        if (!q.metrics.length) q.metrics.push({ field: "", agg: "count" });
+      } else if (which === "filter") {
+        q.filters.splice(idx, 1);
+      }
+    }
+    renderCsvQuery();
+    paintCsvChart();
+  }
+
+  function onCsvQueryChange(e) {
+    if (!e.target.closest("#csvDims, #csvMetrics, #csvFilters, #csvChartType")) return;
+    if (e.target.matches("[data-filter-op]")) {
+      var chip = e.target.closest(".csv-chip");
+      var input = chip && chip.querySelector("[data-filter-value]");
+      if (input) {
+        var op = e.target.value;
+        input.disabled = op === "empty" || op === "not_empty";
+        if (input.disabled) input.value = "";
+      }
+    }
+    paintCsvChart();
+  }
+
+  function openCsvPanel() {
+    var d = active();
+    if (!d || editor.hexOn) {
+      toast("请先打开文本，再做 CSV 分析");
+      return;
+    }
+    closeCompare();
+    var pane = $("#csvPanel");
+    if (!pane) return;
+    pane.classList.remove("hidden");
+    state.csv = null;
+    state.csvQuery = null;
+    refreshMd();
+    applySplitWidths();
+    refreshCsvPanel(true);
+  }
+
   function formatXML() {
     var d = active();
     if (!d || editor.hexOn) return;
@@ -2003,9 +2470,13 @@
       }
       box.textContent = (settings.mdView || "off") === mode ? "✓" : "";
     });
+    applySplitWidths();
     saveSettings();
     editor.schedule();
     refreshMd();
+    if ($("#csvPanel") && !$("#csvPanel").classList.contains("hidden")) {
+      setTimeout(function () { paintCsvChart(); }, 0);
+    }
   }
 
   async function openSettings() {
@@ -2186,7 +2657,9 @@
       base64: toolBase64,
       url: toolUrl,
       jsonfmt: formatJSON,
+      jsonmin: minifyJSON,
       xmlfmt: formatXML,
+      csvAnalyze: openCsvPanel,
       stats: stats,
       compare: compareFiles,
       compareDisk: compareDisk,
@@ -2331,6 +2804,7 @@
       if (!$("#popup").classList.contains("hidden")) { $("#popup").classList.add("hidden"); return; }
       if (!$("#findDlg").classList.contains("hidden")) { $("#findDlg").classList.add("hidden"); editor.focus(); return; }
       if (!$("#compare").classList.contains("hidden")) { closeCompare(); return; }
+      if ($("#csvPanel") && !$("#csvPanel").classList.contains("hidden")) { closeCsvPanel(); return; }
     }
     if (dlg) return;
     var field = isField(e.target);
@@ -2459,6 +2933,22 @@
       $("#panel").classList.add("hidden");
       $("#panelResizer").classList.add("hidden");
     });
+    var csvPane = $("#csvPanel");
+    if (csvPane) {
+      $("#csvClose").addEventListener("click", closeCsvPanel);
+      $("#csvRefresh").addEventListener("click", function () { refreshCsvPanel(true); });
+      var csvQuery = csvPane.querySelector(".csv-query");
+      if (csvQuery) {
+        csvQuery.addEventListener("click", onCsvQueryClick);
+        csvQuery.addEventListener("change", onCsvQueryChange);
+        csvQuery.addEventListener("input", onCsvQueryChange);
+      }
+      var chartType = $("#csvChartType");
+      if (chartType) chartType.addEventListener("change", function () { paintCsvChart(); });
+      window.addEventListener("resize", function () {
+        if (state.csvChart) state.csvChart.resize();
+      });
+    }
     var mdPane = $("#mdPreview");
     if (mdPane) mdPane.addEventListener("click", onMdClick);
     $("#panelBody").addEventListener("click", function (e) {
@@ -2529,6 +3019,16 @@
     });
     resizeDrag($("#sideResizer"), true);
     resizeDrag($("#panelResizer"), false);
+    splitDrag($("#mdResizer"), function (ratio) {
+      settings.mdSplit = ratio;
+      applySplitWidths();
+      editor.schedule();
+    }, function () { saveSettings(); });
+    splitDrag($("#csvResizer"), function (ratio) {
+      settings.csvSplit = ratio;
+      applySplitWidths();
+      if (state.csvChart) state.csvChart.resize();
+    }, function () { saveSettings(); });
     $("#banner").addEventListener("click", function (e) {
       var btn = e.target.closest("[data-banner]");
       if (btn) {
@@ -2566,6 +3066,7 @@
   }
 
   function resizeDrag(handle, horizontal) {
+    if (!handle) return;
     handle.addEventListener("mousedown", function (e) {
       e.preventDefault();
       function move(ev) {
@@ -2576,6 +3077,30 @@
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
         editor.schedule();
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+
+  function splitDrag(handle, onMove, onEnd) {
+    if (!handle) return;
+    handle.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      var parent = handle.parentElement;
+      if (!parent) return;
+      var rect = parent.getBoundingClientRect();
+      if (rect.width < 40) return;
+      document.body.classList.add("col-resizing");
+      function move(ev) {
+        var ratio = ((ev.clientX - rect.left) / rect.width) * 100;
+        onMove(clampSplit(ratio, 52));
+      }
+      function up() {
+        document.body.classList.remove("col-resizing");
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        if (onEnd) onEnd();
       }
       document.addEventListener("mousemove", move);
       document.addEventListener("mouseup", up);

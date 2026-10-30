@@ -40,6 +40,52 @@
             </div>
           </div>
           <div id="compare" class="hidden"></div>
+          <div id="csvPanel" class="hidden">
+            <div class="csv-bar">
+              <span>CSV 分析</span>
+              <span id="csvSummary" class="csv-summary"></span>
+              <span class="sp"></span>
+              <label>图
+                <select id="csvChartType">
+                  <option value="bar">柱状图</option>
+                  <option value="barStack">堆叠柱图</option>
+                  <option value="barH">条形图</option>
+                  <option value="line">折线图</option>
+                  <option value="area">面积图</option>
+                  <option value="pie">饼图</option>
+                  <option value="doughnut">环形图</option>
+                  <option value="scatter">散点图</option>
+                  <option value="radar">雷达图</option>
+                  <option value="heatmap">热力图</option>
+                </select>
+              </label>
+              <button type="button" id="csvRefresh">刷新</button>
+              <button type="button" id="csvClose">关闭</button>
+            </div>
+            <div class="csv-query">
+              <div class="csv-qrow">
+                <span class="csv-qlabel" title="类似 SQL GROUP BY">维度</span>
+                <div id="csvDims" class="csv-chips"></div>
+                <button type="button" class="csv-add" data-csv-add="dim" title="添加维度">＋</button>
+              </div>
+              <div class="csv-qrow">
+                <span class="csv-qlabel" title="汇聚函数">指标</span>
+                <div id="csvMetrics" class="csv-chips"></div>
+                <button type="button" class="csv-add" data-csv-add="metric" title="添加指标">＋</button>
+              </div>
+              <div class="csv-qrow">
+                <span class="csv-qlabel" title="类似 SQL WHERE">过滤</span>
+                <div id="csvFilters" class="csv-chips"></div>
+                <button type="button" class="csv-add" data-csv-add="filter" title="添加过滤">＋</button>
+              </div>
+            </div>
+            <div class="csv-body">
+              <div class="csv-table-wrap"><table id="csvTable"></table></div>
+              <div id="csvResizer" title="拖动调整宽度"></div>
+              <div id="csvChart"></div>
+            </div>
+          </div>
+          <div id="mdResizer" class="hidden" title="拖动调整宽度"></div>
           <div id="mdPreview" class="hidden">
             <div class="md-bar">
               <span>Markdown 预览</span>
@@ -72,6 +118,7 @@
   <script src="js/diff.js"></script>
   <script src="js/highlight.js"></script>
   <script src="js/markdown.js"></script>
+  <script src="js/csv.js"></script>
   <script src="js/model.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/neutralino.js"></script>

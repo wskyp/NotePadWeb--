@@ -31,6 +31,7 @@ var ND = ND || {};
     xml: { name: "XML", exts: ["xml", "xsd", "xsl"], custom: "html" },
     css: { name: "CSS", exts: ["css", "scss", "less"], custom: "css" },
     json: { name: "JSON", exts: ["json"], custom: "json" },
+    csv: { name: "CSV", exts: ["csv"], custom: "csv" },
     sql: { name: "SQL", exts: ["sql"], keywords: setOf("select from where and or not insert into values update set delete create table drop alter join left right inner outer on as group by order having limit offset union all distinct primary key foreign references index view database use begin commit rollback grant revoke like in is null between exists case when then else end asc desc int integer varchar text boolean date timestamp"), line: "--", block: ["/*", "*/"], strings: ["'", "\""] },
     shell: { name: "Shell", exts: ["sh", "bash", "zsh", "ps1", "bat", "cmd"], keywords: setOf("if then else elif fi for while do done case esac function select in echo exit return local export unset readonly shift source alias cd pwd set eval exec trap true false"), hash: true, strings: ["\"", "'"] },
     yaml: { name: "YAML", exts: ["yml", "yaml"], hash: true, strings: ["\"", "'"], keywords: setOf("true false yes no null") },
@@ -374,11 +375,49 @@ var ND = ND || {};
     return { tokens: tokens, state: 0 };
   }
 
+  function tokenizeCsv(text) {
+    var tokens = [];
+    var i = 0;
+    var n = text.length;
+    while (i < n) {
+      var ch = text.charAt(i);
+      if (ch === "\"") {
+        var j = i + 1;
+        while (j < n) {
+          if (text.charAt(j) === "\"") {
+            if (text.charAt(j + 1) === "\"") { j += 2; continue; }
+            j++;
+            break;
+          }
+          j++;
+        }
+        push(tokens, "str", i, j);
+        i = j;
+        continue;
+      }
+      if (ch === "," || ch === ";" || ch === "\t") {
+        push(tokens, "op", i, i + 1);
+        i++;
+        continue;
+      }
+      var k = i + 1;
+      while (k < n) {
+        var c = text.charAt(k);
+        if (c === "," || c === ";" || c === "\t" || c === "\"") break;
+        k++;
+      }
+      push(tokens, "plain", i, k);
+      i = k;
+    }
+    return { tokens: tokens, state: 0 };
+  }
+
   function tokenize(text, state, lang) {
     var def = defOf(lang);
     if (def.custom === "html") return tokenizeHtml(text, state || 0);
     if (def.custom === "css") return tokenizeCss(text, state || 0);
     if (def.custom === "json") return tokenizeJson(text);
+    if (def.custom === "csv") return tokenizeCsv(text);
     if (def.custom === "md") return tokenizeMd(text);
     if (def.custom === "ini") return tokenizeIni(text);
     return tokenizePlain(text, state || 0, lang);
