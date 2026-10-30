@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NotePadWeb--",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "用来编辑文本。可以打开文件夹和文件，保存回原文件，并记住上次打开的内容。",
   "action": {
     "default_title": "打开 NotePadWeb--",
