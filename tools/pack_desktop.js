@@ -7,6 +7,15 @@ var outDir = path.resolve(root, "..", "NotePadWeb-release");
 var stage = path.join(outDir, ".build", "NotePadWeb");
 var resources = path.join(stage, "resources.neu");
 
+function resolveTar() {
+  if (process.platform === "win32") {
+    var systemRoot = process.env.SystemRoot || "C:\\Windows";
+    var systemTar = path.join(systemRoot, "System32", "tar.exe");
+    if (fs.existsSync(systemTar)) return systemTar;
+  }
+  return "tar";
+}
+
 if (process.argv.indexOf("--bundle-only") >= 0) {
   var existing = path.join(outDir, "NotePadWeb-linux");
   fs.writeFileSync(path.join(existing, "NotePadWeb.sh"), linuxLauncherScript());
@@ -78,7 +87,7 @@ if (process.platform === "win32") {
     "Compress-Archive -Path '" + linuxDir.replace(/'/g, "''") + "' -DestinationPath '" + linuxZip.replace(/'/g, "''") + "'"
   ], { stdio: "inherit" });
 } else {
-  child.execFileSync("tar", ["-czf", path.join(outDir, "NotePadWeb-linux.tar.gz"), "-C", outDir, "NotePadWeb-linux"], { stdio: "inherit" });
+  child.execFileSync(resolveTar(), ["-czf", path.join(outDir, "NotePadWeb-linux.tar.gz"), "-C", outDir, "NotePadWeb-linux"], { stdio: "inherit" });
 }
 var executable = writeLinuxExecutable(linuxDir, path.join(outDir, "NotePadWeb"));
 console.log("Linux 包 " + linuxDir);
@@ -109,7 +118,7 @@ function linuxLauncherScript() {
 function writeLinuxExecutable(linuxDir, dest) {
   var crypto = require("crypto");
   var tarPath = dest + ".payload.tar.gz";
-  child.execFileSync("tar", ["-czf", tarPath, "-C", linuxDir, "."], { stdio: "inherit" });
+  child.execFileSync(resolveTar(), ["-czf", tarPath, "-C", linuxDir, "."], { stdio: "inherit" });
   var payload = fs.readFileSync(tarPath);
   fs.rmSync(tarPath, { force: true });
   var stamp = crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12);

@@ -100,9 +100,19 @@ copyDir(path.join(root, "css"), path.join(stage, "css"));
 copyDir(path.join(root, "js"), path.join(stage, "js"));
 copyDir(path.join(root, "ext"), path.join(stage, "ext"));
 
+function resolveTar() {
+  if (process.platform === "win32") {
+    var systemRoot = process.env.SystemRoot || "C:\\Windows";
+    var systemTar = path.join(systemRoot, "System32", "tar.exe");
+    if (fs.existsSync(systemTar)) return systemTar;
+  }
+  return "tar";
+}
+
 fs.mkdirSync(outDir, { recursive: true });
 if (fs.existsSync(zipPath)) fs.rmSync(zipPath);
-child.execFileSync("tar", ["-a", "-cf", zipPath, "-C", stage, "manifest.json", "index.html", "css", "js", "ext"], { stdio: "inherit" });
+// Windows 上若 PATH 先命中 Cygwin tar，会把 D: 当成远程主机报错。
+child.execFileSync(resolveTar(), ["-a", "-cf", zipPath, "-C", stage, "manifest.json", "index.html", "css", "js", "ext"], { stdio: "inherit" });
 
 var id = packCrx(fs.readFileSync(zipPath));
 console.log("Chrome 扩展目录 " + stage);
