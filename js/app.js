@@ -608,6 +608,23 @@
     return ND.codec.encodeText(text, doc.encoding);
   }
 
+  function isPermissionError(err) {
+    var name = err && err.name ? String(err.name) : "";
+    if (name === "NotAllowedError" || name === "SecurityError") return true;
+    var msg = String(err && err.message ? err.message : err || "").toLowerCase();
+    return /permission|access is denied|eacces|eperm|read-only|readonly|denied|不允许|无权|只读|拒绝访问|permission denied/.test(msg);
+  }
+
+  async function ensureWritableHandle(handle) {
+    if (!handle) return false;
+    if (typeof handle.queryPermission === "function" || typeof handle.requestPermission === "function") {
+      var perm = await permissionOf(handle, true);
+      if (perm === "granted") return true;
+      return false;
+    }
+    return typeof handle.createWritable === "function";
+  }
+
   async function saveDoc(doc, saveAs) {
     if (!doc) return false;
     if (doc.truncated && !saveAs) {
@@ -646,12 +663,21 @@
         paintFileWarn();
         return true;
       } catch (err) {
+        if (isPermissionError(err)) {
+          toast("没有写入权限，无法保存到 " + (doc.absPath || doc.name));
+          return false;
+        }
         toast("保存失败：" + (err && err.message ? err.message : err));
         return false;
       }
     }
     try {
       if (!saveAs && doc.handle && doc.handle.createWritable) {
+        var canWrite = await ensureWritableHandle(doc.handle);
+        if (!canWrite) {
+          toast("没有写入权限，无法保存到原文件");
+          return false;
+        }
         var stream = await doc.handle.createWritable();
         await stream.write(bytes);
         await stream.close();
@@ -677,7 +703,12 @@
       }
     } catch (err) {
       if (err && err.name === "AbortError") return false;
+      if (isPermissionError(err)) {
+        toast("没有写入权限，无法保存到原文件");
+        return false;
+      }
       toast("保存失败：" + (err.message || err));
+      return false;
     }
     var partialDownload = !!doc.truncated;
     download(bytes, doc.name);
@@ -701,9 +732,23 @@
     doc.originalBytes = bytes;
     doc.baseText = doc.hex ? doc.baseText : doc.model.text();
     if (doc === state.active) editor.hexDirty = false;
+    touchTreeMtime(doc);
     paintDirty();
     paintStatus();
     rememberSession();
+  }
+
+  function touchTreeMtime(doc) {
+    if (!doc) return;
+    var now = Date.now();
+    var key = doc.absPath ? ND.desktop.normAbs(doc.absPath) : "";
+    state.nodeMap.forEach(function (node) {
+      if (!node || node.kind !== "file") return;
+      if (key && node.absPath && ND.desktop.normAbs(node.absPath) === key) node.mtime = now;
+      else if (doc.handle && node.handle && node.name === doc.name) node.mtime = now;
+      else if (doc.path && nodePath(node) === doc.path) node.mtime = now;
+    });
+    if (state.side === "tree") renderSide();
   }
 
   function download(bytes, name) {
@@ -727,10 +772,15 @@
           name: ND.desktop.baseName(picked),
           kind: "dir",
           absPath: picked,
+          mtime: 0,
           children: null,
           expanded: true,
           parent: null
         };
+        try {
+          var meta = await ND.desktop.invoke("file_meta", { path: picked });
+          if (meta && meta.mtime) root.mtime = meta.mtime;
+        } catch (e) { /* ignore */ }
         await loadChildren(root);
         await addRoot(root);
       } catch (err) {
@@ -766,6 +816,7 @@
           name: entry.name,
           kind: entry.kind === "dir" ? "dir" : "file",
           absPath: entry.path,
+          mtime: entry.mtime || 0,
           parent: node,
           children: entry.kind === "dir" ? null : undefined,
           expanded: false
@@ -773,6 +824,7 @@
       });
       sortNodes(kids);
       node.children = kids;
+      bubbleDirMtime(node);
       return;
     }
     if (!node.handle) return;
@@ -783,18 +835,50 @@
       if (step.done) break;
       var name = step.value[0];
       var handle = step.value[1];
-      kids.push({
+      var kid = {
         nid: state.nid++,
         name: name,
         kind: handle.kind === "directory" ? "dir" : "file",
         handle: handle,
+        mtime: 0,
         parent: node,
         children: handle.kind === "directory" ? null : undefined,
         expanded: false
-      });
+      };
+      if (handle.kind === "file" && handle.getFile) {
+        try {
+          var file = await handle.getFile();
+          kid.mtime = file.lastModified || 0;
+        } catch (e) { /* 无读取权限时跳过时间 */ }
+      }
+      kids.push(kid);
     }
     sortNodes(kids);
     node.children = kids;
+    bubbleDirMtime(node);
+  }
+
+  function refreshDirMtime(node) {
+    if (!node || node.kind !== "dir") return 0;
+    var max = Number(node.mtime) || 0;
+    var kids = node.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var child = kids[i];
+      var t = child.kind === "dir" && child.children
+        ? refreshDirMtime(child)
+        : (Number(child.mtime) || 0);
+      if (t > max) max = t;
+    }
+    if (max) node.mtime = max;
+    return Number(node.mtime) || 0;
+  }
+
+  function bubbleDirMtime(node) {
+    var cur = node;
+    while (cur) {
+      if (cur.kind === "dir") refreshDirMtime(cur);
+      cur = cur.parent;
+    }
   }
 
   function sortNodes(nodes) {
@@ -876,10 +960,14 @@
             kind: last ? "file" : "dir",
             children: last ? undefined : [],
             file: last ? file : null,
+            mtime: last ? (file.lastModified || 0) : 0,
             parent: node,
             expanded: false
           };
           node.children.push(child);
+        } else if (last && file && file.lastModified) {
+          child.mtime = file.lastModified;
+          child.file = file;
         }
         node = child;
       }
@@ -889,6 +977,7 @@
       sortNodes(n.children);
       n.children.forEach(sortRec);
     })(root);
+    refreshDirMtime(root);
     addRoot(root, "这次读入 " + files.length + " 个文件");
   }
 
@@ -953,10 +1042,37 @@
       var icon = n.kind === "dir" ? "📁" : fileIcon(n.name);
       var rootCls = isRoot(n) ? " root" : "";
       var closer = isRoot(n) ? '<button type="button" class="root-x" data-remove-root="' + n.nid + '" title="从侧栏移除">×</button>' : "";
-      var tip = n.kind === "dir" ? ' title="' + ND.esc(displayPath(n)) + '"' : "";
-      html += '<div class="node' + rootCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + closer + "</div>" + childHtml;
+      var timeText = formatMtime(n.mtime);
+      var timeHtml = timeText ? '<span class="ntime" title="修改时间">' + ND.esc(timeText) + "</span>" : '<span class="ntime"></span>';
+      var tipParts = [];
+      if (n.kind === "dir") tipParts.push(displayPath(n));
+      if (n.mtime) tipParts.push("修改于 " + formatMtimeFull(n.mtime));
+      var tip = tipParts.length ? ' title="' + ND.esc(tipParts.join(" · ")) + '"' : "";
+      html += '<div class="node' + rootCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + timeHtml + closer + "</div>" + childHtml;
     }
     return html;
+  }
+
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  function formatMtime(ms) {
+    var d = new Date(Number(ms) || 0);
+    if (!ms || isNaN(d.getTime())) return "";
+    var now = new Date();
+    var hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    if (d.getFullYear() === now.getFullYear()) {
+      return pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + hm;
+    }
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function formatMtimeFull(ms) {
+    var d = new Date(Number(ms) || 0);
+    if (!ms || isNaN(d.getTime())) return "";
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+      " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
   }
 
   function fileIcon(name) {

@@ -109,7 +109,8 @@ ND.desktop = (function () {
       return {
         name: baseName(path),
         size: stats.isDirectory ? 0 : (stats.size || 0),
-        isDir: !!stats.isDirectory
+        isDir: !!stats.isDirectory,
+        mtime: stats.modifiedAt || 0
       };
     });
   }
@@ -149,10 +150,19 @@ ND.desktop = (function () {
         items.push({
           name: entry.entry,
           kind: entry.type === "DIRECTORY" ? "dir" : "file",
-          path: joinPath(path, entry.entry)
+          path: joinPath(path, entry.entry),
+          mtime: 0
         });
       });
-      return items;
+      return Promise.all(items.map(function (item) {
+        return Neutralino.filesystem.getStats(item.path).then(function (stats) {
+          item.mtime = stats.modifiedAt || 0;
+          item.size = stats.size || 0;
+          return item;
+        }, function () {
+          return item;
+        });
+      }));
     });
   }
 

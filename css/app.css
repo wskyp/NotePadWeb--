@@ -177,10 +177,14 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .node:hover { background: var(--hover); }
 .node.on { background: var(--down); }
 .node.root { font-weight: 650; }
-.root-x { margin-left: auto; width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
+.root-x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
 .root-x:hover { background: var(--down); color: var(--text); }
 .tw { width: 12px; text-align: center; color: var(--muted); flex: none; }
-.nname { overflow: hidden; text-overflow: ellipsis; }
+.nname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ntime {
+  margin-left: auto; flex: none; color: var(--muted); font-size: 11px;
+  font-variant-numeric: tabular-nums; padding-left: 8px; letter-spacing: 0;
+}
 .doc-item, .fn-item { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; cursor: default; }
 .doc-item:hover, .fn-item:hover { background: var(--hover); }
 .doc-item.on { background: var(--down); }
