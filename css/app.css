@@ -164,19 +164,32 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .side-tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
 .side-tabs button { flex: 1; height: 28px; }
 .side-tabs button.on { background: var(--menu); box-shadow: inset 0 -2px 0 var(--accent); }
-.side-filter { padding: 6px; flex: none; }
+.side-filter { padding: 6px; flex: none; display: flex; gap: 4px; align-items: center; }
 .side-filter input, .field input, .field select, #findDlg input[type="text"], #findDlg input[type="search"] {
   width: 100%; height: 24px; border: 1px solid var(--line-2); background: var(--menu); border-radius: 2px; padding: 0 6px; outline: none;
 }
+.side-filter input { flex: 1; min-width: 0; }
 .side-filter input:focus, #findDlg input:focus, .field input:focus { border-color: var(--accent); }
+.side-actions { display: flex; gap: 2px; flex: none; }
+.side-actions button {
+  width: 24px; height: 24px; padding: 0; border: 1px solid var(--line-2); border-radius: 2px;
+  background: var(--menu); color: var(--muted); line-height: 1; font-size: 13px;
+}
+.side-actions button:hover { background: var(--hover); color: var(--text); }
 #sideBody { flex: 1; overflow: auto; min-height: 0; padding-bottom: 8px; }
 .tree-empty { color: var(--muted); padding: 12px; }
 .node {
   display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 8px; cursor: default; white-space: nowrap;
 }
 .node:hover { background: var(--hover); }
-.node.on { background: var(--down); }
+.node.on, .node.locate { background: var(--down); }
+.node.locate { box-shadow: inset 2px 0 0 var(--accent); }
 .node.root { font-weight: 650; }
+@keyframes node-flash {
+  0%, 100% { background: var(--down); }
+  50% { background: rgba(47, 128, 237, 0.28); }
+}
+.node.flash { animation: node-flash .9s ease 2; }
 .root-x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
 .root-x:hover { background: var(--down); color: var(--text); }
 .tw { width: 12px; text-align: center; color: var(--muted); flex: none; }

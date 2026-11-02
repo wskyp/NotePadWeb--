@@ -19,7 +19,14 @@
           <button type="button" data-tab="docs">文档</button>
           <button type="button" data-tab="funcs">函数</button>
         </div>
-        <div class="side-filter"><input id="treeFilter" placeholder="筛选名称"></div>
+        <div class="side-filter">
+          <input id="treeFilter" placeholder="筛选名称">
+          <div class="side-actions">
+            <button type="button" data-act="locateFile" title="定位到当前文件">⌖</button>
+            <button type="button" data-act="collapseTree" title="收起全部目录">⊟</button>
+            <button type="button" data-act="expandTree" title="展开全部目录">⊞</button>
+          </div>
+        </div>
         <div id="sideBody"></div>
       </aside>
       <div id="sideResizer"></div>

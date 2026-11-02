@@ -23,7 +23,8 @@
     csv: null,
     csvChart: null,
     csvQuery: null,
-    csvCols: null
+    csvCols: null,
+    treeFocusNid: null
   };
   var settings = loadSettings();
   ND.macro = { rec: false, play: false, ops: [] };
@@ -127,6 +128,10 @@
       ["显示侧栏", "", "sidebar", "sidebar"],
       ["显示工具栏", "", "toolbar", "toolbar"],
       ["显示状态栏", "", "statusbar", "statusbar"],
+      "sep",
+      ["定位到当前文件", "Alt+F1", "locateFile"],
+      ["收起全部目录", "", "collapseTree"],
+      ["展开全部目录", "", "expandTree"],
       "sep",
       ["放大", "Ctrl+=", "zoomIn"],
       ["缩小", "Ctrl+-", "zoomOut"],
@@ -937,9 +942,215 @@
     if (!state.roots.length) { toast("侧栏里没有文件夹"); return; }
     state.roots = [];
     state.workspace = null;
+    state.treeFocusNid = null;
     renderSide();
     toast("已从侧栏移除全部文件夹，已经打开的文档还在");
     rememberSession();
+  }
+
+  function isPathUnder(parent, child) {
+    if (!parent || !child) return false;
+    var a = ND.desktop.normAbs(parent).replace(/[\\/]+$/, "");
+    var b = ND.desktop.normAbs(child).replace(/[\\/]+$/, "");
+    if (b === a) return true;
+    var mark = a.indexOf("\\") >= 0 ? "\\" : "/";
+    return b.indexOf(a + mark) === 0;
+  }
+
+  function nodeMatchesDoc(node, doc) {
+    if (!node || !doc || node.kind !== "file") return false;
+    if (doc.absPath && node.absPath && ND.desktop.normAbs(doc.absPath) === ND.desktop.normAbs(node.absPath)) return true;
+    if (doc.path) {
+      var rel = nodePath(node);
+      var docRel = String(doc.path).replace(/\\/g, "/");
+      if (rel === doc.path || rel === docRel || displayPath(node) === doc.path) return true;
+      if (rel.length > docRel.length && rel.slice(-docRel.length - 1) === "/" + docRel) return true;
+    }
+    return false;
+  }
+
+  async function resolveDocTreeNode(doc) {
+    if (!doc || !state.roots.length) return null;
+    if (doc.absPath) {
+      for (var i = 0; i < state.roots.length; i++) {
+        var root = state.roots[i];
+        if (!root.absPath || !isPathUnder(root.absPath, doc.absPath)) continue;
+        var hit = await descendByParts(root, absPathPartsUnder(root.absPath, doc.absPath));
+        if (hit) return hit;
+      }
+    }
+    var relParts = relativeDocParts(doc);
+    if (relParts && relParts.length) {
+      for (var j = 0; j < state.roots.length; j++) {
+        var fromRoot = await descendByParts(state.roots[j], relParts);
+        if (fromRoot) return fromRoot;
+        if (relParts[0] === state.roots[j].name && relParts.length > 1) {
+          fromRoot = await descendByParts(state.roots[j], relParts.slice(1));
+          if (fromRoot) return fromRoot;
+        }
+      }
+    }
+    if (doc.handle) {
+      for (var r = 0; r < state.roots.length; r++) {
+        var byHandle = await findHandleInTree(state.roots[r], doc.handle);
+        if (byHandle) return byHandle;
+      }
+    }
+    return null;
+  }
+
+  function nameEquals(a, b) {
+    return a === b || String(a).toLowerCase() === String(b).toLowerCase();
+  }
+
+  function absPathPartsUnder(rootAbs, fileAbs) {
+    var base = ND.desktop.normAbs(rootAbs).replace(/[\\/]+$/, "");
+    var target = ND.desktop.normAbs(fileAbs);
+    var rest = target.slice(base.length).replace(/^[\\/]+/, "");
+    return rest ? rest.split(/[\\/]/).filter(Boolean) : [];
+  }
+
+  function relativeDocParts(doc) {
+    if (!doc) return null;
+    var raw = doc.path || doc.name || "";
+    if (!raw) return null;
+    return String(raw).replace(/\\/g, "/").split("/").filter(Boolean);
+  }
+
+  async function descendByParts(root, parts) {
+    if (!parts || !parts.length) return null;
+    var cur = root;
+    for (var i = 0; i < parts.length; i++) {
+      cur.expanded = true;
+      if (cur.children == null && (cur.handle || cur.absPath)) {
+        try { await loadChildren(cur); } catch (e) { return null; }
+      }
+      var kids = cur.children || [];
+      var next = null;
+      for (var k = 0; k < kids.length; k++) {
+        if (!nameEquals(kids[k].name, parts[i])) continue;
+        if (!next || kids[k].name === parts[i]) next = kids[k];
+      }
+      if (!next) return null;
+      cur = next;
+    }
+    return cur.kind === "file" ? cur : null;
+  }
+
+  async function findHandleInTree(node, handle) {
+    if (!node || !handle) return null;
+    if (node.kind === "file" && node.handle && typeof handle.isSameEntry === "function") {
+      try { if (await handle.isSameEntry(node.handle)) return node; } catch (e) { /* ignore */ }
+      return null;
+    }
+    if (node.kind !== "dir") return null;
+    if (node.children == null && (node.handle || node.absPath)) {
+      try { await loadChildren(node); } catch (e) { return null; }
+    }
+    var kids = node.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var hit = await findHandleInTree(kids[i], handle);
+      if (hit) {
+        node.expanded = true;
+        return hit;
+      }
+    }
+    return null;
+  }
+
+  async function locateOpenedFile() {
+    var doc = active();
+    if (!doc) { toast("没有正在浏览的文件"); return; }
+    if (!state.roots.length) { toast("侧栏还没有打开文件夹"); return; }
+    state.side = "tree";
+    setSideTab();
+    var node = await resolveDocTreeNode(doc);
+    if (!node) {
+      toast("当前文件不在已打开的文件夹中");
+      return;
+    }
+    var p = node.parent;
+    while (p) {
+      p.expanded = true;
+      p = p.parent;
+    }
+    state.treeFocusNid = node.nid;
+    renderSide();
+    requestAnimationFrame(function () {
+      var el = document.querySelector('.node[data-nid="' + node.nid + '"]');
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("flash");
+      setTimeout(function () { el.classList.remove("flash"); }, 1800);
+    });
+  }
+
+  function collapseTreeDeep(node) {
+    if (!node || node.kind !== "dir") return;
+    (node.children || []).forEach(function (child) {
+      if (child.kind === "dir") {
+        child.expanded = false;
+        collapseTreeDeep(child);
+      }
+    });
+  }
+
+  function collapseAllTrees() {
+    if (!state.roots.length) { toast("侧栏还没有打开文件夹"); return; }
+    state.roots.forEach(function (root) {
+      collapseTreeDeep(root);
+      root.expanded = true;
+    });
+    state.side = "tree";
+    setSideTab();
+    renderSide();
+    toast("已收起全部目录");
+  }
+
+  async function expandTreeDeep(node, counter) {
+    if (!node || node.kind !== "dir") return;
+    if (counter.count >= counter.cap) {
+      counter.truncated = true;
+      return;
+    }
+    node.expanded = true;
+    counter.count++;
+    if (node.children == null && (node.handle || node.absPath)) {
+      try { await loadChildren(node); } catch (e) { return; }
+    }
+    var kids = node.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      if (counter.count >= counter.cap) {
+        counter.truncated = true;
+        break;
+      }
+      if (kids[i].kind === "dir") await expandTreeDeep(kids[i], counter);
+    }
+  }
+
+  async function expandAllUnder(node) {
+    if (!node || node.kind !== "dir") return;
+    var counter = { count: 0, cap: 300, truncated: false };
+    await expandTreeDeep(node, counter);
+    bubbleDirMtime(node);
+    state.side = "tree";
+    setSideTab();
+    renderSide();
+    if (counter.truncated) toast("目录很多，已展开前 " + counter.cap + " 层目录项");
+  }
+
+  async function expandAllTrees() {
+    if (!state.roots.length) { toast("侧栏还没有打开文件夹"); return; }
+    var counter = { count: 0, cap: 300, truncated: false };
+    for (var i = 0; i < state.roots.length; i++) {
+      await expandTreeDeep(state.roots[i], counter);
+      if (counter.truncated) break;
+    }
+    state.roots.forEach(bubbleDirMtime);
+    state.side = "tree";
+    setSideTab();
+    renderSide();
+    toast(counter.truncated ? ("目录很多，已展开前 " + counter.cap + " 项") : "已展开全部目录");
   }
 
   function workspaceFromFiles(files) {
@@ -1048,7 +1259,8 @@
       if (n.kind === "dir") tipParts.push(displayPath(n));
       if (n.mtime) tipParts.push("修改于 " + formatMtimeFull(n.mtime));
       var tip = tipParts.length ? ' title="' + ND.esc(tipParts.join(" · ")) + '"' : "";
-      html += '<div class="node' + rootCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + timeHtml + closer + "</div>" + childHtml;
+      var onCls = state.treeFocusNid === n.nid ? " locate on" : "";
+      html += '<div class="node' + rootCls + onCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + timeHtml + closer + "</div>" + childHtml;
     }
     return html;
   }
@@ -1097,9 +1309,11 @@
       renderSide();
       return;
     }
+    state.treeFocusNid = node.nid;
     if (node.absPath && ND.desktop.inDesktop()) await openAbsPath(node.absPath);
     else if (node.handle) await openHandle(node.handle, node.parent, nodePath(node));
     else if (node.file) await openFileObject(node.file, { parent: node.parent, path: node.file.webkitRelativePath || node.name });
+    else renderSide();
   }
 
   function nodePath(node) {
@@ -1153,11 +1367,21 @@
     }
     items.push([node.kind === "dir" ? "复制绝对路径" : "复制路径", "copyNodePath"]);
     items.push(["刷新", "refreshNode"]);
+    if (node.kind === "dir") {
+      items.push(["展开全部", "expandUnder"]);
+      items.push(["收起子目录", "collapseUnder"]);
+    }
     if (isRoot(node)) items.push(["从侧栏移除", "removeRoot"]);
     popup(x, y, items, async function (act) {
       if (act === "openNode" && node.kind === "file") await onTreeClick(node.nid);
       if (act === "copyNodePath") copyText(displayPath(node));
       if (act === "refreshNode" && node.kind === "dir" && (node.handle || node.absPath)) { await loadChildren(node); renderSide(); }
+      if (act === "expandUnder" && node.kind === "dir") await expandAllUnder(node);
+      if (act === "collapseUnder" && node.kind === "dir") {
+        collapseTreeDeep(node);
+        node.expanded = true;
+        renderSide();
+      }
       if (act === "removeRoot") removeRoot(node);
       if (act === "newInDir") await createIn(node.kind === "dir" ? node : node.parent, false);
       if (act === "newDir") await createIn(node.kind === "dir" ? node : node.parent, true);
@@ -2746,6 +2970,9 @@
       sidebar: function () { settings.sidebar = !settings.sidebar; applySettings(); },
       toolbar: function () { settings.toolbar = !settings.toolbar; applySettings(); },
       statusbar: function () { settings.statusbar = !settings.statusbar; applySettings(); },
+      locateFile: function () { locateOpenedFile(); },
+      collapseTree: function () { collapseAllTrees(); },
+      expandTree: function () { expandAllTrees(); },
       autoPair: function () { settings.autoPair = !settings.autoPair; applySettings(); },
       autoWord: function () { settings.autoWord = !settings.autoWord; applySettings(); },
       zoomIn: function () { settings.fontSize = Math.min(32, settings.fontSize + 1); applySettings(); },
@@ -2789,7 +3016,7 @@
       encMenu: function () {},
       langMenu: function () {},
       shortcuts: function () {
-        ask("快捷键", "Ctrl+N/O/S 新建、打开、保存\nCtrl+F/H 查找、替换，F3 下一个\nCtrl+G 跳转，Ctrl+D 复制行\nCtrl+/ 注释，Ctrl+F2 书签，F2 下一书签\nCtrl+Shift+M Markdown 预览\nAlt+Up/Down 移动行\n拖动文件夹到窗口即可打开", [["ok", "关闭", true]]);
+        ask("快捷键", "Ctrl+N/O/S 新建、打开、保存\nCtrl+F/H 查找、替换，F3 下一个\nCtrl+G 跳转，Ctrl+D 复制行\nCtrl+/ 注释，Ctrl+F2 书签，F2 下一书签\nCtrl+Shift+M Markdown 预览\nAlt+F1 定位当前文件到侧栏\nAlt+Up/Down 移动行\n拖动文件夹到窗口即可打开", [["ok", "关闭", true]]);
       },
       updateExt: function () {
         if (!ND.desktop.inExtension()) {
@@ -2997,6 +3224,13 @@
       });
     });
     $("#treeFilter").addEventListener("input", renderSide);
+    var sideActs = document.querySelector(".side-actions");
+    if (sideActs) {
+      sideActs.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-act]");
+        if (btn) run(btn.getAttribute("data-act"));
+      });
+    }
     $("#sideBody").addEventListener("click", function (e) {
       var rm = e.target.closest("[data-remove-root]");
       if (rm) {
