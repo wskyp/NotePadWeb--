@@ -198,17 +198,18 @@
 
 ### Zip 内容要求
 
-压缩包根目录必须直接包含插件文件，例如：
+压缩包应包含一层目录 `NotePadWeb-chrome/`，其内是插件文件，例如：
 
 ```text
-manifest.json
-index.html
-css/
-js/
-ext/
+NotePadWeb-chrome/
+  manifest.json
+  index.html
+  css/
+  js/
+  ext/
 ```
 
-不要再套一层 `NotePadWeb-chrome/` 目录。`manifest.json` 里的 `version` 应高于用户当前版本。
+`manifest.json` 里的 `version` 应高于用户当前版本。
 
 可用仓库里的打包命令生成：
 
@@ -216,14 +217,14 @@ ext/
 node tools/pack_chrome.js
 ```
 
-产物：`NotePadWeb-release/NotePadWeb-chrome.zip`。服务端可直接托管这份文件，或拷成 `update.zip`。
+产物：`NotePadWeb-release/NotePadWeb-chrome.zip`（外层为 `NotePadWeb-chrome/`）。服务端可直接托管这份文件，或拷成 `update.zip`。若上传校验要求 zip 根目录直接含 `manifest.json`，可把目录内文件再打成扁平 zip，或校验时识别一层同名目录。
 
 ### 客户端安装说明（人工一步）
 
 Chrome 不允许插件改写自己的安装目录。下载完成后，用户需要：
 
-1. 解压 `NotePadWeb-chrome.zip`
-2. 用解压出的文件覆盖当前「加载未打包的扩展程序」所指向的目录
+1. 解压 `NotePadWeb-chrome.zip`，得到 `NotePadWeb-chrome/` 目录
+2. 首次安装：在扩展页「加载未打包的扩展程序」，指向该目录；更新时用其内容覆盖当前加载目录
 3. 在插件对话框点「重新加载」，或到扩展页点重新加载
 
 服务端只需提供可下载的 zip；覆盖目录由用户完成。
@@ -270,7 +271,7 @@ Access-Control-Allow-Headers: Content-Type, X-Upload-Token
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | string | 是 | 新版本号，须与 zip 内 `manifest.json` 的 `version` 一致，如 `1.0.1` |
-| `file` | file | 是 | 插件 zip 二进制。根目录须直接含 `manifest.json`、`index.html`、`css/`、`js/`、`ext/` |
+| `file` | file | 是 | 插件 zip 二进制。可为扁平结构，或根目录为 `NotePadWeb-chrome/`（内含 `manifest.json`、`index.html`、`css/`、`js/`、`ext/`） |
 | `notes` | string | 否 | 更新说明，可写入服务端日志或管理页 |
 | `force` | string | 否 | 传 `1` 时允许覆盖已存在的相同版本；默认拒绝重复上传同一版本 |
 

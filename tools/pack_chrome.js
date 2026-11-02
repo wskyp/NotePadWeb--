@@ -112,9 +112,16 @@ function resolveTar() {
 fs.mkdirSync(outDir, { recursive: true });
 if (fs.existsSync(zipPath)) fs.rmSync(zipPath);
 // Windows 上若 PATH 先命中 Cygwin tar，会把 D: 当成远程主机报错。
-child.execFileSync(resolveTar(), ["-a", "-cf", zipPath, "-C", stage, "manifest.json", "index.html", "css", "js", "ext"], { stdio: "inherit" });
+// 发布用 zip：根目录包一层 NotePadWeb-chrome，解压即得可加载目录。
+child.execFileSync(resolveTar(), ["-a", "-cf", zipPath, "-C", outDir, "NotePadWeb-chrome"], { stdio: "inherit" });
 
-var id = packCrx(fs.readFileSync(zipPath));
+// CRX 内的 zip 必须扁平（manifest 在根），不能带外层目录。
+var flatZipPath = path.join(outDir, "NotePadWeb-chrome.flat.zip");
+if (fs.existsSync(flatZipPath)) fs.rmSync(flatZipPath);
+child.execFileSync(resolveTar(), ["-a", "-cf", flatZipPath, "-C", stage, "manifest.json", "index.html", "css", "js", "ext"], { stdio: "inherit" });
+var id = packCrx(fs.readFileSync(flatZipPath));
+fs.rmSync(flatZipPath);
+
 console.log("Chrome 扩展目录 " + stage);
 console.log("Chrome 扩展压缩包 " + zipPath);
 console.log("Chrome 扩展安装包 " + crxPath);

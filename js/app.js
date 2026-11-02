@@ -76,6 +76,7 @@
       ["全部保存", "Ctrl+Shift+A", "saveAll"],
       "sep",
       ["关闭", "Ctrl+W", "close"],
+      ["关闭其他", "", "closeOthers"],
       ["全部关闭", "", "closeAll"],
       ["打印", "Ctrl+P", "print"]
     ]},
@@ -373,10 +374,51 @@
   }
 
   function renderTabs() {
-    $("#tabs").innerHTML = state.docs.map(function (d) {
+    var host = $("#tabs");
+    host.innerHTML = state.docs.map(function (d) {
       var dirty = d.model.dirty() || d.hexDirty;
-      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + '" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + '"><span class="star">' + (dirty ? "●" : "") + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '">×</button></div>';
+      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + '" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + '"><span class="star">' + (dirty ? "●" : "") + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '" title="关闭">×</button></div>';
     }).join("");
+    requestAnimationFrame(function () {
+      ensureActiveTabVisible();
+      updateTabsNav();
+    });
+  }
+
+  function ensureActiveTabVisible() {
+    var host = $("#tabs");
+    if (!host || !state.active) return;
+    var tab = host.querySelector('.tab[data-id="' + state.active.id + '"]');
+    if (tab && tab.scrollIntoView) tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function updateTabsNav() {
+    var more = $("#tabsMore");
+    if (!more) return;
+    more.classList.toggle("hidden", state.docs.length <= 1);
+    more.classList.toggle("on", state.docs.length > 1);
+  }
+
+  function showTabsMenu(anchor) {
+    if (!state.docs.length) return;
+    var rect = (anchor || $("#tabsMore")).getBoundingClientRect();
+    var items = state.docs.map(function (d) {
+      var dirty = d.model.dirty() || d.hexDirty;
+      var mark = d === state.active ? "✓ " : "  ";
+      return [mark + (dirty ? "● " : "") + d.name, "tab:" + d.id];
+    });
+    if (state.docs.length > 1) {
+      items.push("sep");
+      items.push(["关闭其他", "closeOthers"]);
+      items.push(["全部关闭", "closeAll"]);
+    }
+    popup(Math.max(8, rect.right - 220), rect.bottom + 2, items, function (act) {
+      if (act === "closeOthers") { closeOtherDocs(active()); return; }
+      if (act === "closeAll") { closeAllDocs(); return; }
+      if (act.indexOf("tab:") !== 0) return;
+      var doc = docById(act.slice(4));
+      if (doc) activate(doc);
+    });
   }
 
   function paintDirty() {
@@ -410,7 +452,7 @@
   }
 
   async function closeDoc(doc) {
-    if (!doc) return;
+    if (!doc) return false;
     var dirty = doc.model.dirty() || doc.hexDirty;
     if (dirty) {
       var answer = await ask(doc.name, "文件已修改，是否保存？", [
@@ -418,10 +460,10 @@
         ["discard", "不保存"],
         ["save", "保存", true]
       ]);
-      if (answer !== "save" && answer !== "discard") return;
+      if (answer !== "save" && answer !== "discard") return false;
       if (answer === "save") {
         var ok = await saveDoc(doc);
-        if (!ok) return;
+        if (!ok) return false;
       }
     }
     var idx = state.docs.indexOf(doc);
@@ -430,6 +472,47 @@
     else if (state.active === doc) activate(state.docs[Math.max(0, idx - 1)]);
     else renderTabs();
     rememberSession();
+    return true;
+  }
+
+  async function closeOtherDocs(keep) {
+    keep = keep || active();
+    if (!keep) return;
+    var list = state.docs.filter(function (d) { return d !== keep; });
+    if (!list.length) { toast("没有其他已打开的文件"); return; }
+    for (var i = 0; i < list.length; i++) {
+      if (state.docs.indexOf(list[i]) < 0) continue;
+      var ok = await closeDoc(list[i]);
+      if (!ok) return;
+    }
+    if (state.docs.indexOf(keep) >= 0 && state.active !== keep) activate(keep);
+    else renderTabs();
+  }
+
+  async function closeAllDocs() {
+    var list = state.docs.slice();
+    for (var i = 0; i < list.length; i++) {
+      if (state.docs.indexOf(list[i]) < 0) continue;
+      var ok = await closeDoc(list[i]);
+      if (!ok) return;
+    }
+  }
+
+  function tabContextMenu(x, y, doc) {
+    if (!doc) return;
+    var items = [
+      ["关闭", "closeTab"],
+      ["关闭其他", "closeOthersTab"],
+      ["全部关闭", "closeAllTab"]
+    ];
+    popup(x, y, items, function (act) {
+      if (act === "closeTab") closeDoc(doc);
+      if (act === "closeOthersTab") {
+        if (state.active !== doc) activate(doc);
+        closeOtherDocs(doc);
+      }
+      if (act === "closeAllTab") closeAllDocs();
+    });
   }
 
   var TREE_DRAW_CAP = 800;
@@ -2902,10 +2985,8 @@
       saveAs: function () { saveDoc(d, true); },
       saveAll: function () { state.docs.forEach(function (doc) { if (doc.model.dirty() || doc.hexDirty) saveDoc(doc, false); }); },
       close: function () { closeDoc(d); },
-      closeAll: async function () {
-        var list = state.docs.slice();
-        for (var i = 0; i < list.length; i++) await closeDoc(list[i]);
-      },
+      closeOthers: function () { closeOtherDocs(d); },
+      closeAll: function () { closeAllDocs(); },
       print: function () {
         if (!m) return;
         var w = window.open("", "_blank");
@@ -3215,6 +3296,22 @@
     $("#tabs").addEventListener("auxclick", function (e) {
       var tab = e.target.closest(".tab");
       if (tab && e.button === 1) closeDoc(docById(tab.getAttribute("data-id")));
+    });
+    $("#tabs").addEventListener("contextmenu", function (e) {
+      var tab = e.target.closest(".tab");
+      if (!tab) return;
+      e.preventDefault();
+      var doc = docById(tab.getAttribute("data-id"));
+      if (doc) tabContextMenu(e.clientX, e.clientY, doc);
+    });
+    var tabsMore = $("#tabsMore");
+    if (tabsMore) tabsMore.addEventListener("click", function (e) {
+      e.stopPropagation();
+      showTabsMenu(tabsMore);
+    });
+    window.addEventListener("resize", function () {
+      ensureActiveTabVisible();
+      updateTabsNav();
     });
     document.querySelectorAll(".side-tabs button").forEach(function (btn) {
       btn.addEventListener("click", function () {
