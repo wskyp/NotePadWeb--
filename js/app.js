@@ -145,7 +145,8 @@
         ["仅预览", "", "md:preview"]
       ]},
       ["十六进制", "", "hex"],
-      ["只读", "", "readonly"]
+      ["只读", "", "readonly"],
+      ["跟踪日志", "", "followLog", "followLog"]
     ]},
     { name: "编码", items: [
       ["UTF-8", "", "enc:utf-8"],
@@ -349,7 +350,7 @@
     doc.model.tabSize = settings.tabSize;
     doc.model.insertSpaces = settings.insertSpaces;
     doc.model.autoIndent = settings.autoIndent;
-    doc.model.readOnly = !!doc.readOnly;
+    doc.model.readOnly = !!doc.readOnly || !!doc.following;
     editor.tabSize = settings.tabSize;
     editor.bind(doc);
     editor.wrap = !!settings.wrap && !doc.noWrap;
@@ -364,6 +365,7 @@
     document.title = (doc.model.dirty() || doc.hexDirty ? "*" : "") + doc.name + " - NotePadWeb--";
     refreshMd();
     rememberSession();
+    syncFollowTimer();
   }
 
   function stash(doc) {
@@ -453,6 +455,7 @@
 
   async function closeDoc(doc) {
     if (!doc) return false;
+    if (doc.following) stopFollow(doc, true);
     var dirty = doc.model.dirty() || doc.hexDirty;
     if (dirty) {
       var answer = await ask(doc.name, "文件已修改，是否保存？", [
@@ -519,6 +522,10 @@
   var TEXT_PLAIN_BYTES = 1500000;
   var TEXT_CUT_BYTES = 2000000;
   var TEXT_HEAD_BYTES = 1024 * 1024;
+  var FOLLOW_TAIL_BYTES = 1024 * 1024;
+  var FOLLOW_POLL_MS = 800;
+  var followTimer = 0;
+  var followBusy = false;
   var HEX_WINDOW_BYTES = 1024 * 1024;
   var WRAP_LINE_CAP = 20000;
   var FIND_HIT_CAP = 400;
@@ -595,11 +602,259 @@
     if (!el) return;
     var d = active();
     var lines = [];
-    if (d && d.truncated) lines.push(truncationText(d));
+    if (d && d.following) {
+      lines.push("正在跟踪日志（类似 tail -f）：只显示末尾约 " + formatBytes(FOLLOW_TAIL_BYTES) + "，有新内容会自动追加并滚到底。再点「视图 → 跟踪日志」可停止。");
+    }
+    if (d && d.truncated && !d.following) lines.push(truncationText(d));
     if (d && d.noWrap && settings.wrap) lines.push("这个文件有 " + d.model.lines.length + " 行，自动换行已暂停，避免把每一行都拆开重排。");
     if (!lines.length) { el.classList.add("hidden"); el.textContent = ""; return; }
     el.textContent = lines.join("\n");
     el.classList.remove("hidden");
+  }
+
+  function paintFollowCheck() {
+    document.querySelectorAll('[data-flag="followLog"]').forEach(function (el) {
+      el.textContent = active() && active().following ? "✓" : "";
+    });
+  }
+
+  function canFollow(doc) {
+    if (!doc) return false;
+    if (doc.absPath && ND.desktop.inDesktop()) return true;
+    if (doc.handle) return true;
+    return false;
+  }
+
+  function decodeFollowBytes(bytes, encoding, stream) {
+    if (!bytes || !bytes.length) return "";
+    if (encoding === "utf-16le") return new TextDecoder("utf-16le").decode(bytes, { stream: !!stream });
+    if (encoding === "gbk" || encoding === "gb18030") return new TextDecoder("gb18030").decode(bytes, { stream: !!stream });
+    return new TextDecoder("utf-8").decode(bytes, { stream: !!stream });
+  }
+
+  function mergeFollowPending(doc, bytes) {
+    if (!doc._followPending || !doc._followPending.length) return bytes;
+    if (!bytes || !bytes.length) return doc._followPending;
+    var out = new Uint8Array(doc._followPending.length + bytes.length);
+    out.set(doc._followPending, 0);
+    out.set(bytes, doc._followPending.length);
+    return out;
+  }
+
+  function takeFollowComplete(doc, bytes, encoding) {
+    bytes = mergeFollowPending(doc, bytes);
+    doc._followPending = null;
+    if (!bytes || !bytes.length) return new Uint8Array(0);
+    if (encoding === "utf-16le") {
+      if (bytes.length % 2) {
+        doc._followPending = bytes.subarray(bytes.length - 1);
+        return bytes.subarray(0, bytes.length - 1);
+      }
+      return bytes;
+    }
+    if (encoding === "utf-8" || !encoding) {
+      var n = bytes.length;
+      var i = n;
+      while (i > 0 && i > n - 4 && (bytes[i - 1] & 0xc0) === 0x80) i--;
+      if (i > 0 && i > n - 4) {
+        var lead = bytes[i - 1];
+        var need = (lead & 0xe0) === 0xc0 ? 2 : (lead & 0xf0) === 0xe0 ? 3 : (lead & 0xf8) === 0xf0 ? 4 : 1;
+        if (n - (i - 1) < need) {
+          doc._followPending = bytes.subarray(i - 1);
+          return bytes.subarray(0, i - 1);
+        }
+      }
+    }
+    return bytes;
+  }
+
+  async function followMeta(doc) {
+    if (doc.absPath && ND.desktop.inDesktop()) {
+      return ND.desktop.invoke("file_meta", { path: doc.absPath });
+    }
+    if (doc.handle) {
+      var file = await doc.handle.getFile();
+      doc.file = file;
+      return { size: file.size, name: file.name, mtime: file.lastModified || 0 };
+    }
+    throw new Error("没有可跟踪的文件句柄");
+  }
+
+  async function followRead(doc, start, end) {
+    if (end <= start) return new Uint8Array(0);
+    if (doc.absPath && ND.desktop.inDesktop()) {
+      return ND.desktop.readRange(doc.absPath, start, end);
+    }
+    if (doc.handle) {
+      var file = doc.file || await doc.handle.getFile();
+      doc.file = file;
+      return readFileSlice(file, start, end);
+    }
+    throw new Error("没有可跟踪的文件句柄");
+  }
+
+  function snapTailStart(bytes, fromOffset) {
+    if (!fromOffset || !bytes.length) return { offset: fromOffset || 0, bytes: bytes };
+    var limit = Math.min(bytes.length, 8192);
+    for (var i = 0; i < limit; i++) {
+      if (bytes[i] === 10) {
+        return { offset: fromOffset + i + 1, bytes: bytes.subarray(i + 1) };
+      }
+    }
+    return { offset: fromOffset, bytes: bytes };
+  }
+
+  function scrollFollowEnd(doc) {
+    if (!doc || doc !== active() || editor.hexOn) return;
+    var last = Math.max(0, doc.model.lines.length - 1);
+    doc.model.cursor = { line: last, col: doc.model.lines[last].length };
+    doc.model.anchor = { line: last, col: doc.model.lines[last].length };
+    editor.schedule();
+    editor.reveal();
+  }
+
+  function clearFollowTimer() {
+    if (followTimer) {
+      clearInterval(followTimer);
+      followTimer = 0;
+    }
+  }
+
+  function syncFollowTimer() {
+    clearFollowTimer();
+    var d = active();
+    if (!d || !d.following) return;
+    followTimer = setInterval(function () {
+      tickFollow(d);
+    }, FOLLOW_POLL_MS);
+  }
+
+  function stopFollow(doc, quiet) {
+    if (!doc || !doc.following) return;
+    doc.following = false;
+    doc.followOffset = 0;
+    doc._followPending = null;
+    if (doc._followPrevReadOnly != null) {
+      doc.readOnly = !!doc._followPrevReadOnly;
+      doc.model.readOnly = doc.readOnly;
+      doc._followPrevReadOnly = null;
+    }
+    if (doc === active()) {
+      clearFollowTimer();
+      paintStatus();
+      paintFollowCheck();
+      if (!quiet) toast("已停止跟踪");
+    }
+  }
+
+  async function loadFollowTail(doc) {
+    var meta = await followMeta(doc);
+    var size = meta.size || 0;
+    var start = Math.max(0, size - FOLLOW_TAIL_BYTES);
+    var bytes = await followRead(doc, start, size);
+    var snapped = snapTailStart(bytes, start);
+    start = snapped.offset;
+    bytes = snapped.bytes;
+    doc._followPending = null;
+    var text = decodeFollowBytes(bytes, doc.encoding || "utf-8", false);
+    var split = ND.codec.splitText(text);
+    if (!doc.eol) doc.eol = split.eol;
+    doc.model.setText(split.lines.join("\n"));
+    doc.model.markClean();
+    doc.followOffset = size;
+    doc.truncated = start > 0 ? { total: size, shown: bytes.length, mode: "tail", kind: "text" } : null;
+    doc.totalSize = size;
+    if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
+  }
+
+  async function startFollow(doc) {
+    if (!doc) return;
+    if (doc.following) return;
+    if (editor.hexOn || doc.hex) {
+      toast("请先退出十六进制视图，再跟踪日志");
+      return;
+    }
+    if (!canFollow(doc)) {
+      toast("跟踪日志需要通过「打开文件夹」或桌面程序打开的文件，才能持续读取更新");
+      return;
+    }
+    if (doc.model.dirty() || doc.hexDirty) {
+      toast("请先保存或放弃修改，再开始跟踪");
+      return;
+    }
+    try {
+      doc._followPrevReadOnly = !!doc.readOnly;
+      doc.readOnly = true;
+      doc.model.readOnly = true;
+      await loadFollowTail(doc);
+      doc.following = true;
+      if (doc === active()) {
+        editor.wrap = !!settings.wrap && !doc.noWrap;
+        editor.schedule();
+        scrollFollowEnd(doc);
+        syncFollowTimer();
+        paintStatus();
+        paintFollowCheck();
+        paintDirty();
+        toast("已开始跟踪末尾日志");
+      }
+    } catch (err) {
+      doc.following = false;
+      if (doc._followPrevReadOnly != null) {
+        doc.readOnly = !!doc._followPrevReadOnly;
+        doc.model.readOnly = doc.readOnly;
+        doc._followPrevReadOnly = null;
+      }
+      toast("无法跟踪：" + (err && err.message ? err.message : err));
+    }
+  }
+
+  async function tickFollow(doc) {
+    if (followBusy || !doc || !doc.following || doc !== active() || editor.hexOn) return;
+    followBusy = true;
+    try {
+      var meta = await followMeta(doc);
+      var size = meta.size || 0;
+      var offset = doc.followOffset || 0;
+      if (size < offset) {
+        await loadFollowTail(doc);
+        scrollFollowEnd(doc);
+        paintStatus();
+        return;
+      }
+      if (size === offset) return;
+      var chunk = await followRead(doc, offset, size);
+      doc.followOffset = size;
+      doc.totalSize = size;
+      if (doc.truncated) doc.truncated.total = size;
+      chunk = takeFollowComplete(doc, chunk, doc.encoding || "utf-8");
+      if (!chunk.length) return;
+      var text = decodeFollowBytes(chunk, doc.encoding || "utf-8", false);
+      if (!text) return;
+      text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      var cur = doc.model.text();
+      var next = cur ? cur + text : text;
+      var atEnd = doc.model.cursor.line >= doc.model.lines.length - 1;
+      doc.model.setText(next);
+      doc.model.markClean();
+      if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
+      editor.wrap = !!settings.wrap && !doc.noWrap;
+      if (atEnd) scrollFollowEnd(doc);
+      else editor.schedule();
+      paintStatus();
+    } catch (err) {
+      stopFollow(doc, true);
+      toast("跟踪中断：" + (err && err.message ? err.message : err));
+    } finally {
+      followBusy = false;
+    }
+  }
+
+  function toggleFollowLog() {
+    var d = active();
+    if (!d) return;
+    if (d.following) stopFollow(d);
+    else startFollow(d);
   }
 
   function looksBinary(bytes) {
@@ -715,6 +970,10 @@
 
   async function saveDoc(doc, saveAs) {
     if (!doc) return false;
+    if (doc.following) {
+      toast("跟踪日志时为只读，请先停止跟踪再保存");
+      return false;
+    }
     if (doc.truncated && !saveAs) {
       toast("当前只载入了文件开头，直接保存会覆盖尚未载入的内容，已取消。");
       paintFileWarn();
@@ -1619,18 +1878,23 @@
     var lang = ND.Highlight.nameOf(d.language);
     var mode = editor.hexOn ? "十六进制" : (m.overtype ? "改写" : "插入");
     var macro = ND.macro.rec ? "录制中 " + ND.macro.ops.length : "";
-    var cut = d.truncated ? " 已截断" : "";
+    var cut = d.following ? "" : (d.truncated ? " 已截断" : "");
+    var follow = d.following ? " 跟踪中" : "";
+    if (d.following) {
+      lenLabel = "末尾 " + d.model.lines.length + " 行 / 文件 " + formatBytes(d.totalSize || (d.truncated && d.truncated.total) || 0);
+    }
     $("#status").innerHTML =
       '<span class="st">长度: ' + lenLabel + "</span>" +
       '<span class="st">行: ' + line + "</span>" +
       '<span class="st">列: ' + col + "</span>" +
       '<span class="st">选中: ' + sel + "</span>" +
-      '<span class="st grow">' + macro + cut + (d.readOnly ? " 只读" : "") + "</span>" +
+      '<span class="st grow">' + macro + cut + follow + (d.readOnly ? " 只读" : "") + "</span>" +
       '<button type="button" class="st btn" data-act="eolMenu">' + eol + "</button>" +
       '<button type="button" class="st btn" data-act="encMenu">' + enc + "</button>" +
       '<button type="button" class="st btn" data-act="langMenu">' + lang + "</button>" +
       '<button type="button" class="st btn" data-act="overtype">' + mode + "</button>";
     paintFileWarn();
+    paintFollowCheck();
   }
 
   function toast(msg) {
@@ -2878,7 +3142,8 @@
       d.model.autoIndent = settings.autoIndent;
     });
     document.querySelectorAll("[data-flag]").forEach(function (el) {
-      var on = !!settings[el.getAttribute("data-flag")];
+      var flag = el.getAttribute("data-flag");
+      var on = flag === "followLog" ? !!(active() && active().following) : !!settings[flag];
       el.textContent = on ? "✓" : "";
     });
     document.querySelectorAll('.tb[data-act="wrap"]').forEach(function (el) { el.classList.toggle("on", settings.wrap); });
@@ -2944,8 +3209,16 @@
     try { if (ND.track) ND.track.action(act); } catch (err) {}
     if (act.indexOf("theme:") === 0) { settings.theme = act.slice(6); applySettings(); return; }
     if (act.indexOf("lang:") === 0) { if (d) { d.language = act.slice(5); editor.schedule(); paintStatus(); } return; }
-    if (act.indexOf("enc:") === 0) { if (d) { d.encoding = act.slice(4); d.model.gen++; paintStatus(); paintDirty(); } return; }
-    if (act.indexOf("reopen:") === 0) { reinterpret(act.slice(7)); return; }
+    if (act.indexOf("enc:") === 0) {
+      if (d && d.following) { toast("跟踪日志时请先停止跟踪，再更改编码"); return; }
+      if (d) { d.encoding = act.slice(4); d.model.gen++; paintStatus(); paintDirty(); }
+      return;
+    }
+    if (act.indexOf("reopen:") === 0) {
+      if (d && d.following) { toast("跟踪日志时请先停止跟踪，再重新打开"); return; }
+      reinterpret(act.slice(7));
+      return;
+    }
     if (act.indexOf("md:") === 0) {
       var mode = act.slice(3);
       if (mode === "toggle") settings.mdView = settings.mdView && settings.mdView !== "off" ? "off" : "split";
@@ -3063,8 +3336,15 @@
         if (!document.fullscreenElement) document.documentElement.requestFullscreen();
         else document.exitFullscreen();
       },
-      hex: function () { toggleHex(); },
-      readonly: function () { if (d) { d.readOnly = !d.readOnly; d.model.readOnly = d.readOnly; toast(d.readOnly ? "只读" : "可编辑"); paintStatus(); } },
+      hex: function () {
+        if (d && d.following) { toast("请先停止跟踪日志，再切换十六进制"); return; }
+        toggleHex();
+      },
+      readonly: function () {
+        if (d && d.following) { toast("跟踪日志时保持只读，请先停止跟踪"); return; }
+        if (d) { d.readOnly = !d.readOnly; d.model.readOnly = d.readOnly; toast(d.readOnly ? "只读" : "可编辑"); paintStatus(); }
+      },
+      followLog: function () { toggleFollowLog(); },
       settings: openSettings,
       macroRec: function () { ND.macro.rec = true; ND.macro.ops = []; toast("开始录制"); paintStatus(); },
       macroStop: function () { ND.macro.rec = false; toast("停止，共 " + ND.macro.ops.length + " 步"); paintStatus(); },
