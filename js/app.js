@@ -709,8 +709,15 @@
     var last = Math.max(0, doc.model.lines.length - 1);
     doc.model.cursor = { line: last, col: doc.model.lines[last].length };
     doc.model.anchor = { line: last, col: doc.model.lines[last].length };
+    // 先同步重绘拉高 spacer，再滚到底；否则 reveal 时高度还是旧的，scrollTop 会被夹住。
+    if (editor._raf) {
+      cancelAnimationFrame(editor._raf);
+      editor._raf = 0;
+    }
+    editor.render();
+    var view = editor.view;
+    if (view) view.scrollTop = view.scrollHeight;
     editor.schedule();
-    editor.reveal();
   }
 
   function clearFollowTimer() {
@@ -834,13 +841,11 @@
       text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       var cur = doc.model.text();
       var next = cur ? cur + text : text;
-      var atEnd = doc.model.cursor.line >= doc.model.lines.length - 1;
       doc.model.setText(next);
       doc.model.markClean();
       if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
       editor.wrap = !!settings.wrap && !doc.noWrap;
-      if (atEnd) scrollFollowEnd(doc);
-      else editor.schedule();
+      scrollFollowEnd(doc);
       paintStatus();
     } catch (err) {
       stopFollow(doc, true);
