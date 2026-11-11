@@ -4369,7 +4369,11 @@
     }
     window.addEventListener("error", function (e) { toast(e.message || "脚本错误"); });
     if (ND.desktop.inDesktop()) {
-      restoreNativeSession();
+      ND.desktop.ready().then(function () {
+        restoreNativeSession();
+      }).catch(function () {
+        restoreNativeSession();
+      });
       ND.desktop.onWindowClose(function () {
         var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
         if (!dirty) return true;

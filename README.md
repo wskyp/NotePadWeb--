@@ -65,6 +65,30 @@ NOTEPADWEB_INSTANCE=A ./NotePadWeb-*.AppImage
 
 开发时同样可用：`npm run electron -- --instance=A`。窗口标题会带上实例名，便于区分。
 
+### 远程服务器地址（环境变量）
+
+默认写在 `js/remote-config.js`。打包或运行桌面程序时可用环境变量覆盖：
+
+| 变量 | 含义 |
+|------|------|
+| `NOTEPADWEB_REMOTE_ORIGIN` 或 `NOTEPADWEB_ORIGIN` | 例如 `http://10.0.0.8` |
+| `NOTEPADWEB_REMOTE_BASE_PATH` 或 `NOTEPADWEB_BASE_PATH` | 例如 `/eda_agent/notepad_web` |
+
+```bash
+# 打包时写入包内默认地址
+NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8 npm run build
+
+# 已打包程序启动时覆盖（不必重打包）
+NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8 ./NotePadWeb
+```
+
+Windows：
+
+```bat
+set NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8
+NotePadWeb-win_x64.exe
+```
+
 ### 备选：Neutralino（体积小，依赖系统 WebKit）
 
 ```bash

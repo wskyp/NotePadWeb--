@@ -30,9 +30,28 @@ ND.desktop = (function () {
     }
   }
 
+  function applyRemoteEnv(env) {
+    if (ND.remote && typeof ND.remote.applyEnv === "function") ND.remote.applyEnv(env || {});
+  }
+
+  function loadRemoteEnv() {
+    if (inElectron()) {
+      try {
+        applyRemoteEnv((window.notepadDesktop && window.notepadDesktop.env) || {});
+      } catch (err) { /* ignore */ }
+      return Promise.resolve();
+    }
+    if (!inNeutralino() || !Neutralino.os || typeof Neutralino.os.getEnvs !== "function") {
+      return Promise.resolve();
+    }
+    return Neutralino.os.getEnvs().then(function (envs) {
+      applyRemoteEnv(envs || {});
+    }).catch(function () {});
+  }
+
   function ready() {
     if (!inDesktop()) return Promise.resolve();
-    if (inElectron()) return Promise.resolve();
+    if (inElectron()) return loadRemoteEnv();
     if (!started) {
       started = new Promise(function (resolve, reject) {
         try {
@@ -41,7 +60,7 @@ ND.desktop = (function () {
         } catch (err) {
           reject(err);
         }
-      });
+      }).then(loadRemoteEnv);
     }
     return started;
   }

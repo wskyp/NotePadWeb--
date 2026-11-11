@@ -4,6 +4,14 @@ var { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("notepadDesktop", {
   platform: process.platform,
+  env: {
+    NOTEPADWEB_REMOTE_ORIGIN: process.env.NOTEPADWEB_REMOTE_ORIGIN || process.env.NOTEPADWEB_ORIGIN || "",
+    NOTEPADWEB_ORIGIN: process.env.NOTEPADWEB_ORIGIN || process.env.NOTEPADWEB_REMOTE_ORIGIN || "",
+    NOTEPADWEB_REMOTE_BASE_PATH: process.env.NOTEPADWEB_REMOTE_BASE_PATH || process.env.NOTEPADWEB_BASE_PATH || "",
+    NOTEPADWEB_BASE_PATH: process.env.NOTEPADWEB_BASE_PATH || process.env.NOTEPADWEB_REMOTE_BASE_PATH || "",
+    NOTEPADWEB_DATA_DIR: process.env.NOTEPADWEB_DATA_DIR || "",
+    NOTEPADWEB_INSTANCE: process.env.NOTEPADWEB_INSTANCE || ""
+  },
   invoke: function (cmd, args) {
     return ipcRenderer.invoke("desktop:invoke", cmd, args || {});
   },

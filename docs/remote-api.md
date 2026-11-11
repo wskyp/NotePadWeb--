@@ -9,13 +9,17 @@
 
 配置与范围：
 
-- 统一配置：`js/remote-config.js`（只改 `origin` 和 `basePath`）
-- 插件权限：由 `node tools/remote_config.js` 或 `node tools/pack_chrome.js` 根据上面配置写入 `manifest.json` 的 `host_permissions`
-- 插件侧调用：只有作为 Chrome / Edge 插件运行时才会打点 / 查版本 / 下载；直接打开 `index.html` 或桌面窗口不会调用
+- 统一配置：`js/remote-config.js`（默认 `origin` / `basePath`）
+- 环境变量（推荐，打包与运行都可用）：
+  - `NOTEPADWEB_REMOTE_ORIGIN` 或 `NOTEPADWEB_ORIGIN`
+  - `NOTEPADWEB_REMOTE_BASE_PATH` 或 `NOTEPADWEB_BASE_PATH`
+- 打包时：`npm run build` / `npm run chrome` 会先跑 `node tools/remote_config.js`，若设了上述环境变量会写入 `js/remote-config.js` 并同步插件 `host_permissions`
+- 桌面端运行时：Neutralino / Electron 启动时也会读同名环境变量并覆盖内置地址（不必重打包）
+- 插件侧调用：只有作为 Chrome / Edge 插件运行时才会打点 / 查版本 / 下载
 - 上传接口：给发布方使用，**不要**做进普通用户插件菜单
-- 当前默认：`origin = http://127.0.0.1`，`basePath = /eda_agent/notepad_web`
+- 当前文件内默认：`origin = http://129.0.0.1`，`basePath = /eda_agent/notepad_web`
 
-换服务器或路径时，只改 `js/remote-config.js`，再执行 `node tools/remote_config.js`（或直接 `node tools/pack_chrome.js`）。
+换服务器：改 `js/remote-config.js`，或设置环境变量后执行 `node tools/remote_config.js` / 直接打包。
 
 接口一览：
 
@@ -384,34 +388,48 @@ HTTP `200`，`Content-Type: application/json`：
 
 ## 配置对照（改服务器时）
 
-只改 `js/remote-config.js`：
+### 方式 A：环境变量（推荐）
 
-```js
-ND.remote = {
-  origin: "http://127.0.0.1",
-  basePath: "/eda_agent/notepad_web",
-  ...
-};
+```bash
+# 打包时写入默认地址
+set NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8
+set NOTEPADWEB_REMOTE_BASE_PATH=/eda_agent/notepad_web
+npm run build
+
+# 或已打包的桌面程序，启动时覆盖（不必重打包）
+set NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8
+NotePadWeb-win_x64.exe
 ```
 
-由此自动拼出：
+Linux：
 
-| 用途 | 拼法 | 当前结果 |
-|---|---|---|
-| 打点 | `origin + basePath + /cat` | `http://127.0.0.1/eda_agent/notepad_web/cat` |
-| 版本 | `.../version` | `http://127.0.0.1/eda_agent/notepad_web/version` |
-| 更新包 | `.../update.zip` | `http://127.0.0.1/eda_agent/notepad_web/update.zip` |
-| 上传 | `.../upload` | `http://127.0.0.1/eda_agent/notepad_web/upload` |
-| 主机权限 | `origin + /*` | `http://127.0.0.1/*` |
+```bash
+NOTEPADWEB_REMOTE_ORIGIN=http://10.0.0.8 \
+NOTEPADWEB_REMOTE_BASE_PATH=/eda_agent/notepad_web \
+./NotePadWeb
+```
 
-上传口令仍用环境变量 `NOTEPADWEB_UPLOAD_TOKEN`，不要写进源码。若临时改上传地址，可用 `NOTEPADWEB_UPLOAD_URL` 覆盖。
+### 方式 B：改源码
 
-改完后执行：
+只改 `js/remote-config.js` 里的 `origin` / `basePath`，再执行：
 
 ```bash
 node tools/remote_config.js
 # 或直接打包（打包时会自动同步 manifest）
 node tools/pack_chrome.js
+npm run build
 ```
 
-然后在扩展页点一次「重新加载」。
+由此自动拼出：
+
+| 用途 | 拼法 | 示例 |
+|---|---|---|
+| 打点 | `origin + basePath + /cat` | `http://10.0.0.8/eda_agent/notepad_web/cat` |
+| 版本 | `.../version` | `.../version` |
+| 更新包 | `.../update.zip` | `.../update.zip` |
+| 上传 | `.../upload` | `.../upload` |
+| 主机权限 | `origin + /*` | `http://10.0.0.8/*` |
+
+上传口令仍用环境变量 `NOTEPADWEB_UPLOAD_TOKEN`，不要写进源码。若临时改上传地址，可用 `NOTEPADWEB_UPLOAD_URL` 覆盖。
+
+Chrome 插件改完后在扩展页点一次「重新加载」。
