@@ -19,6 +19,12 @@ function copyDir(from, to) {
   });
 }
 
+try {
+  require("./remote_config").syncAppVersion();
+} catch (err) {
+  console.warn("同步版本号失败：" + ((err && err.message) || err));
+}
+
 fs.rmSync(dest, { recursive: true, force: true });
 copyFile(path.join(root, "index.html"), path.join(dest, "index.html"));
 copyDir(path.join(root, "css"), path.join(dest, "css"));

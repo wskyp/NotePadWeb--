@@ -492,6 +492,12 @@ body[data-theme="dark"] .ed-suggest .sug-note, body[data-theme="monokai"] .ed-su
 .csv-table-wrap {
   flex: none; width: var(--csv-split); min-width: 160px; overflow: auto; border-right: 1px solid var(--line);
 }
+.csv-body.csv-chart-off .csv-table-wrap {
+  flex: 1 1 auto; width: auto; border-right: none;
+}
+.csv-body.csv-chart-off #csvResizer,
+.csv-body.csv-chart-off #csvChart { display: none !important; }
+#csvChartToggle.on { background: var(--hover); border-color: var(--accent); color: var(--accent); }
 #csvResizer { align-self: stretch; }
 #csvTable {
   border-collapse: collapse; width: max-content; min-width: 100%;

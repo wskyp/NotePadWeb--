@@ -4,6 +4,21 @@ var path = require("path");
 var root = path.resolve(__dirname, "..");
 var configPath = path.join(root, "js", "remote-config.js");
 var manifestPath = path.join(root, "manifest.json");
+var packagePath = path.join(root, "package.json");
+var versionPath = path.join(root, "js", "version.js");
+
+function syncAppVersion() {
+  var version = String(JSON.parse(fs.readFileSync(packagePath, "utf8")).version || "").trim();
+  if (!version) throw new Error("package.json 没有 version");
+  var text = "/* global ND */\nvar ND = ND || {};\nND.APP_VERSION = \"" + version.replace(/"/g, '\\"') + "\";\n";
+  fs.writeFileSync(versionPath, text);
+  var manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if (manifest.version !== version) {
+    manifest.version = version;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  }
+  return version;
+}
 
 function normalizeOrigin(value) {
   return String(value == null ? "" : value).trim().replace(/\/+$/, "");
@@ -73,8 +88,10 @@ function applyEnvToConfig() {
 function applyManifest() {
   applyEnvToConfig();
   var cfg = read();
+  var appVersion = syncAppVersion();
   var manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   manifest.host_permissions = [cfg.hostPermission()];
+  manifest.version = appVersion;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   return cfg;
 }
@@ -83,6 +100,7 @@ module.exports = {
   read: read,
   applyManifest: applyManifest,
   applyEnvToConfig: applyEnvToConfig,
+  syncAppVersion: syncAppVersion,
   configPath: configPath
 };
 
@@ -91,6 +109,7 @@ if (require.main === module) {
   if (envOrigin() || envBasePath() != null) {
     console.log("已按环境变量写入 js/remote-config.js");
   }
+  console.log("appVersion " + syncAppVersion());
   console.log("origin " + cfg.origin);
   console.log("basePath " + cfg.basePath);
   console.log("cat " + cfg.url("cat"));
@@ -98,5 +117,5 @@ if (require.main === module) {
   console.log("update.zip " + cfg.url("update.zip"));
   console.log("upload " + cfg.url("upload"));
   console.log("host_permissions " + cfg.hostPermission());
-  console.log("已写入 manifest.json");
+  console.log("已写入 manifest.json / js/version.js");
 }

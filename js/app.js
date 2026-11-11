@@ -231,7 +231,7 @@
       autoPair: true, autoWord: true,
       showWs: false, wrap: false, minimap: true, folding: true,
       sidebar: true, toolbar: true, statusbar: true, mdView: "split",
-      mdSplit: 52, csvSplit: 52
+      mdSplit: 52, csvSplit: 52, csvChart: false
     };
     try {
       var saved = JSON.parse(localStorage.getItem("notepadmm.settings") || "null");
@@ -2719,6 +2719,34 @@
     return echartsLoading;
   }
 
+  function appVersion() {
+    try {
+      if (ND.desktop.inExtension() && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) {
+        var mv = chrome.runtime.getManifest().version;
+        if (mv) return String(mv);
+      }
+    } catch (err) { /* ignore */ }
+    return String((ND && ND.APP_VERSION) || "0.0.0");
+  }
+
+  function applyCsvChartVisibility() {
+    var on = !!settings.csvChart;
+    var body = document.querySelector(".csv-body");
+    if (body) body.classList.toggle("csv-chart-off", !on);
+    var btn = $("#csvChartToggle");
+    if (btn) {
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.textContent = on ? "隐藏图表" : "显示图表";
+    }
+    var wrap = $("#csvChartTypeWrap");
+    if (wrap) wrap.classList.toggle("hidden", !on);
+    if (!on && state.csvChart) {
+      try { state.csvChart.dispose(); } catch (err) {}
+      state.csvChart = null;
+    }
+  }
+
   function closeCsvPanel() {
     var pane = $("#csvPanel");
     if (pane) pane.classList.add("hidden");
@@ -2728,6 +2756,21 @@
     }
     refreshMd();
     editor.schedule();
+  }
+
+  function toggleCsvChart() {
+    settings.csvChart = !settings.csvChart;
+    saveSettings();
+    applyCsvChartVisibility();
+    if (settings.csvChart) {
+      ensureEcharts().then(function () {
+        paintCsvChart();
+      }).catch(function (err) {
+        toast(err && err.message ? err.message : "图表加载失败");
+      });
+    } else {
+      refreshCsvTableOnly();
+    }
   }
 
   function csvOptionHtml(list, selected) {
@@ -2851,20 +2894,31 @@
     return "维度 " + dims + " · 指标 " + metrics;
   }
 
-  function paintCsvChart() {
+  function refreshCsvTableOnly() {
     var pane = $("#csvPanel");
-    var host = $("#csvChart");
-    if (!pane || pane.classList.contains("hidden") || !host || !state.csv || !window.echarts) return;
+    if (!pane || pane.classList.contains("hidden") || !state.csv) return null;
     syncCsvQueryFromDom();
-    var type = ($("#csvChartType") && $("#csvChartType").value) || "bar";
     var result = ND.Csv.aggregate(state.csv, state.csvQuery);
     var filtered = ND.Csv.applyFilters(state.csv.rows, state.csvQuery.filters);
     renderCsvTable(state.csv, filtered);
     var summary = $("#csvSummary");
     if (summary) {
       summary.textContent = "过滤 " + result.filteredCount + "/" + result.totalCount +
-        " 行 · 分组 " + result.groups.length;
+        " 行 · 分组 " + result.labels.length +
+        (result.truncated ? "（图表已截断）" : "");
     }
+    return result;
+  }
+
+  function paintCsvChart() {
+    var pane = $("#csvPanel");
+    var host = $("#csvChart");
+    if (!pane || pane.classList.contains("hidden") || !state.csv) return;
+    var result = refreshCsvTableOnly();
+    if (!result) return;
+    if (!settings.csvChart) return;
+    if (!host || !window.echarts) return;
+    var type = ($("#csvChartType") && $("#csvChartType").value) || "bar";
     if (!state.csvChart) state.csvChart = window.echarts.init(host);
     else state.csvChart.resize();
     var dark = csvIsDarkTheme();
@@ -3057,11 +3111,16 @@
       syncCsvQueryFromDom();
       renderCsvQuery();
     }
-    ensureEcharts().then(function () {
-      paintCsvChart();
-    }).catch(function (err) {
-      toast(err && err.message ? err.message : "图表加载失败");
-    });
+    applyCsvChartVisibility();
+    if (settings.csvChart) {
+      ensureEcharts().then(function () {
+        paintCsvChart();
+      }).catch(function (err) {
+        toast(err && err.message ? err.message : "图表加载失败");
+      });
+    } else {
+      refreshCsvTableOnly();
+    }
   }
 
   function onCsvQueryClick(e) {
@@ -3127,6 +3186,7 @@
     pane.classList.remove("hidden");
     state.csv = null;
     state.csvQuery = null;
+    applyCsvChartVisibility();
     refreshMd();
     applySplitWidths();
     refreshCsvPanel(true);
@@ -3280,6 +3340,7 @@
       box.textContent = (settings.mdView || "off") === mode ? "✓" : "";
     });
     applySplitWidths();
+    applyCsvChartVisibility();
     saveSettings();
     editor.schedule();
     refreshMd();
@@ -3530,7 +3591,7 @@
         });
       },
       about: function () {
-        var intro = "作者：汪继鹏\n版本：v1.0\n\n用来编辑文本。可以同时打开多个文件和文件夹，按语言做语法高亮，也能查找替换、切换编码（UTF-8、GBK、GB18030、UTF-16 LE）、预览 Markdown、查看和修改十六进制，以及对比文件和文件夹。Markdown 会按标题、列表、表格和代码块排版。";
+        var intro = "作者：汪继鹏\n版本：v" + appVersion() + "\n\n用来编辑文本。可以同时打开多个文件和文件夹，按语言做语法高亮，也能查找替换、切换编码（UTF-8、GBK、GB18030、UTF-16 LE）、预览 Markdown、查看和修改十六进制，以及对比文件和文件夹。Markdown 会按标题、列表、表格和代码块排版。";
         var how = ND.desktop.inDesktop()
           ? "\n在这个桌面窗口里，保存会写回原来的文件。下次启动会重新打开上次的文件夹和文件。"
           : ND.desktop.inExtension()
@@ -3785,6 +3846,8 @@
     if (csvPane) {
       $("#csvClose").addEventListener("click", closeCsvPanel);
       $("#csvRefresh").addEventListener("click", function () { refreshCsvPanel(true); });
+      var chartToggle = $("#csvChartToggle");
+      if (chartToggle) chartToggle.addEventListener("click", toggleCsvChart);
       var csvQuery = csvPane.querySelector(".csv-query");
       if (csvQuery) {
         csvQuery.addEventListener("click", onCsvQueryClick);
@@ -3793,6 +3856,7 @@
       }
       var chartType = $("#csvChartType");
       if (chartType) chartType.addEventListener("change", function () { paintCsvChart(); });
+      applyCsvChartVisibility();
       window.addEventListener("resize", function () {
         if (state.csvChart) state.csvChart.resize();
       });
