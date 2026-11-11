@@ -47,23 +47,25 @@ chmod +x NotePadWeb-*-linux-x86_64.AppImage
 - 体积大约一百多 MB（内含 Chromium）
 - 需要图形界面（本机桌面或已设置 `DISPLAY`）
 
-同一系统账号要**多开多份互不覆盖**时，给每个实例指定不同数据目录（设置、上次打开的文件夹等都会分开）：
+同一系统账号要**多开多份互不覆盖**时，给每个实例指定不同数据目录（设置、上次打开的文件夹等都会分开）。Electron AppImage 与 Neutralino 的 `NotePadWeb` / `NotePadWeb.sh` **参数相同**：
 
 ```bash
 # 方式 1：起一个命名实例（数据在默认配置目录下的 instances/ 里）
-./NotePadWeb-*.AppImage --instance=A
-./NotePadWeb-*.AppImage --instance=B
+./NotePadWeb --instance=A
+./NotePadWeb --instance=B
+# Electron：~/.config/NotePadWeb/instances/<名>
+# Neutralino：~/.local/share/dev.notepadweb.desktop/instances/<名>
 
 # 方式 2：显式指定绝对路径
-./NotePadWeb-*.AppImage --data-dir="$HOME/.notepadweb-work"
-./NotePadWeb-*.AppImage --data-dir="$HOME/.notepadweb-temp"
+./NotePadWeb --data-dir="$HOME/.notepadweb-work"
+./NotePadWeb --data-dir="$HOME/.notepadweb-temp"
 
 # 方式 3：环境变量
-NOTEPADWEB_DATA_DIR="$HOME/.notepadweb-work" ./NotePadWeb-*.AppImage
-NOTEPADWEB_INSTANCE=A ./NotePadWeb-*.AppImage
+NOTEPADWEB_DATA_DIR="$HOME/.notepadweb-work" ./NotePadWeb
+NOTEPADWEB_INSTANCE=A ./NotePadWeb
 ```
 
-开发时同样可用：`npm run electron -- --instance=A`。窗口标题会带上实例名，便于区分。
+开发时同样可用：`npm run electron -- --instance=A`、`npm run desktop -- --instance=A`。窗口标题会带上实例名，便于区分。未指定时仍共用默认仓（同一账号下最后写入的会话会互相覆盖）。
 
 ### 远程服务器地址（环境变量）
 

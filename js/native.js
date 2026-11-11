@@ -1,10 +1,12 @@
-/* global ND, Neutralino, NL_PORT, NL_OS */
+/* global ND, Neutralino, NL_PORT, NL_OS, NL_ARGS, NL_DATAPATH, NL_APPID */
 var ND = ND || {};
 
 ND.desktop = (function () {
   "use strict";
 
   var started = null;
+  var dataProfile = { dir: "", instance: "", label: "default", mode: "storage" };
+  var APP_DATA_ID = "dev.notepadweb.desktop";
 
   function inElectron() {
     try {
@@ -34,24 +36,166 @@ ND.desktop = (function () {
     if (ND.remote && typeof ND.remote.applyEnv === "function") ND.remote.applyEnv(env || {});
   }
 
+  function cliArgs() {
+    try {
+      if (typeof NL_ARGS !== "undefined" && NL_ARGS && NL_ARGS.length) {
+        return Array.prototype.slice.call(NL_ARGS);
+      }
+    } catch (err) { /* ignore */ }
+    return [];
+  }
+
+  function argValue(names, args) {
+    args = args || [];
+    for (var i = 0; i < args.length; i++) {
+      var a = String(args[i] || "");
+      for (var n = 0; n < names.length; n++) {
+        var key = names[n];
+        if (a === key && args[i + 1]) return String(args[i + 1]);
+        if (a.indexOf(key + "=") === 0) return a.slice(key.length + 1);
+      }
+    }
+    return "";
+  }
+
+  function safeInstanceName(name) {
+    var s = String(name || "").trim();
+    if (!s) return "";
+    s = s.replace(/[\\/]+/g, "-").replace(/\.\./g, "");
+    s = s.replace(/[^\w.\u4e00-\u9fff-]+/g, "_");
+    return s.slice(0, 64);
+  }
+
+  function storageKeySuffix(instance) {
+    var s = String(instance || "").replace(/[^a-zA-Z0-9_-]/g, "");
+    return s.slice(0, 24);
+  }
+
+  function scopedStorageKey(base) {
+    var suffix = storageKeySuffix(dataProfile.instance);
+    if (!suffix) return base;
+    var key = base + "_" + suffix;
+    return key.length > 50 ? key.slice(0, 50) : key;
+  }
+
+  function resolveAppDataRoot(envs) {
+    envs = envs || {};
+    try {
+      if (typeof NL_DATAPATH !== "undefined" && NL_DATAPATH) {
+        return String(NL_DATAPATH).replace(/[\\/]+$/, "");
+      }
+    } catch (err) { /* ignore */ }
+    var id = APP_DATA_ID;
+    try {
+      if (typeof NL_APPID !== "undefined" && NL_APPID) id = String(NL_APPID);
+    } catch (err) { /* ignore */ }
+    if (onWindows()) {
+      var appdata = envs.APPDATA || envs.LOCALAPPDATA || "";
+      if (appdata) return joinPath(String(appdata).replace(/[\\/]+$/, ""), id);
+      return joinPath("C:\\Users\\Public", id);
+    }
+    var xdg = envs.XDG_DATA_HOME || "";
+    if (xdg) return joinPath(String(xdg).replace(/[\\/]+$/, ""), id);
+    var home = envs.HOME || envs.USERPROFILE || "";
+    if (home) return joinPath(joinPath(String(home).replace(/[\\/]+$/, ""), ".local/share"), id);
+    return joinPath("/tmp", id);
+  }
+
+  function buildDataProfile(envs) {
+    envs = envs || {};
+    var args = cliArgs();
+    var custom = String(
+      argValue(["--data-dir", "--user-data-dir"], args) ||
+      envs.NOTEPADWEB_DATA_DIR ||
+      ""
+    ).trim();
+    var instance = safeInstanceName(
+      argValue(["--instance"], args) || envs.NOTEPADWEB_INSTANCE || ""
+    );
+    if (custom) {
+      return {
+        dir: custom.replace(/[\\/]+$/, ""),
+        instance: instance,
+        label: custom,
+        mode: "files"
+      };
+    }
+    if (instance) {
+      var dir = joinPath(joinPath(resolveAppDataRoot(envs), "instances"), instance);
+      return {
+        dir: dir,
+        instance: instance,
+        label: "instance:" + instance,
+        mode: "files"
+      };
+    }
+    return { dir: "", instance: "", label: "default", mode: "storage" };
+  }
+
+  function applyWindowTitle() {
+    var title = "NotePadWeb--";
+    if (dataProfile.instance) title += " [" + dataProfile.instance + "]";
+    else if (dataProfile.label && dataProfile.label !== "default") {
+      title += " [" + baseName(dataProfile.dir || dataProfile.label) + "]";
+    }
+    if (inElectron()) return Promise.resolve();
+    if (!inNeutralino() || !Neutralino.window || typeof Neutralino.window.setTitle !== "function") {
+      return Promise.resolve();
+    }
+    return Neutralino.window.setTitle(title).catch(function () {});
+  }
+
+  function initDataProfile(envs) {
+    if (inElectron()) {
+      if (window.notepadDesktop && typeof window.notepadDesktop.dataDir === "function") {
+        return window.notepadDesktop.dataDir().then(function (info) {
+          dataProfile = {
+            dir: (info && info.dir) || "",
+            instance: (info && info.instance) || "",
+            label: (info && info.label) || "default",
+            mode: "storage"
+          };
+          return dataProfile;
+        }).catch(function () {
+          dataProfile = buildDataProfile((window.notepadDesktop && window.notepadDesktop.env) || {});
+          return dataProfile;
+        });
+      }
+      dataProfile = buildDataProfile((window.notepadDesktop && window.notepadDesktop.env) || {});
+      return Promise.resolve(dataProfile);
+    }
+    dataProfile = buildDataProfile(envs || {});
+    var prep = Promise.resolve();
+    if (dataProfile.mode === "files" && dataProfile.dir) {
+      prep = Neutralino.filesystem.createDirectory(dataProfile.dir).catch(function () {});
+    }
+    return prep.then(applyWindowTitle).then(function () { return dataProfile; });
+  }
+
   function loadRemoteEnv() {
     if (inElectron()) {
       try {
         applyRemoteEnv((window.notepadDesktop && window.notepadDesktop.env) || {});
       } catch (err) { /* ignore */ }
-      return Promise.resolve();
+      return initDataProfile(null);
     }
     if (!inNeutralino() || !Neutralino.os || typeof Neutralino.os.getEnvs !== "function") {
-      return Promise.resolve();
+      return initDataProfile({});
     }
     return Neutralino.os.getEnvs().then(function (envs) {
       applyRemoteEnv(envs || {});
-    }).catch(function () {});
+      return initDataProfile(envs || {});
+    }).catch(function () {
+      return initDataProfile({});
+    });
   }
 
   function ready() {
     if (!inDesktop()) return Promise.resolve();
-    if (inElectron()) return loadRemoteEnv();
+    if (inElectron()) {
+      if (!started) started = loadRemoteEnv();
+      return started;
+    }
     if (!started) {
       started = new Promise(function (resolve, reject) {
         try {
@@ -63,6 +207,15 @@ ND.desktop = (function () {
       }).then(loadRemoteEnv);
     }
     return started;
+  }
+
+  function getDataProfile() {
+    return {
+      dir: dataProfile.dir,
+      instance: dataProfile.instance,
+      label: dataProfile.label,
+      mode: dataProfile.mode
+    };
   }
 
   function reject(err) {
@@ -420,12 +573,96 @@ ND.desktop = (function () {
     });
   }
 
+  function encodeText(str) {
+    var s = str == null ? "" : String(str);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(s);
+    var out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+
+  function decodeText(buf) {
+    var bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf || []);
+    if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8").decode(bytes);
+    var s = "";
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    try { return decodeURIComponent(escape(s)); } catch (err) { return s; }
+  }
+
+  function fileStorePath(key) {
+    return joinPath(dataProfile.dir, key + ".json");
+  }
+
+  function fileStoreSet(key, value) {
+    var path = fileStorePath(key);
+    if (value == null) {
+      return Neutralino.filesystem.remove(path).catch(function () {});
+    }
+    var bytes = encodeText(String(value));
+    return Neutralino.filesystem.createDirectory(dataProfile.dir).catch(function () {}).then(function () {
+      return Neutralino.filesystem.writeBinaryFile(path, bytes.buffer);
+    });
+  }
+
+  function fileStoreGet(key) {
+    return Neutralino.filesystem.readBinaryFile(fileStorePath(key)).then(function (buf) {
+      return decodeText(buf);
+    }).catch(function () {
+      return null;
+    });
+  }
+
+  function storeSet(key, value) {
+    key = String(key || "");
+    if (!key) return Promise.resolve();
+    if (inElectron()) {
+      try { localStorage.setItem(key, value == null ? "" : String(value)); } catch (err) { /* ignore */ }
+      return Promise.resolve();
+    }
+    if (inNeutralino()) {
+      return ready().then(function () {
+        if (dataProfile.mode === "files" && dataProfile.dir) {
+          return fileStoreSet(key, value);
+        }
+        var sk = scopedStorageKey(key);
+        if (value == null) return Neutralino.storage.removeData(sk).catch(function () {});
+        return Neutralino.storage.setData(sk, String(value));
+      }).catch(function () {});
+    }
+    try { localStorage.setItem(key, value == null ? "" : String(value)); } catch (err) { /* ignore */ }
+    return Promise.resolve();
+  }
+
+  function storeGet(key) {
+    key = String(key || "");
+    if (!key) return Promise.resolve(null);
+    if (inElectron()) {
+      try { return Promise.resolve(localStorage.getItem(key)); } catch (err) { return Promise.resolve(null); }
+    }
+    if (inNeutralino()) {
+      return ready().then(function () {
+        if (dataProfile.mode === "files" && dataProfile.dir) {
+          return fileStoreGet(key);
+        }
+        return Neutralino.storage.getData(scopedStorageKey(key));
+      }).then(function (data) {
+        return data == null ? null : String(data);
+      }).catch(function () {
+        return null;
+      });
+    }
+    try { return Promise.resolve(localStorage.getItem(key)); } catch (err) { return Promise.resolve(null); }
+  }
+
   return {
     inDesktop: inDesktop,
     inExtension: inExtension,
     ready: ready,
     onWindowClose: onWindowClose,
     invoke: invoke,
+    storeSet: storeSet,
+    storeGet: storeGet,
+    getDataProfile: getDataProfile,
     bytesToBase64: bytesToBase64,
     base64ToBytes: base64ToBytes,
     baseName: baseName,

@@ -10,12 +10,15 @@
   "logging": {
     "enabled": false
   },
+  "dataLocation": "system",
+  "storageLocation": "system",
   "nativeAllowList": [
     "app.*",
     "os.*",
     "filesystem.*",
     "window.*",
-    "events.*"
+    "events.*",
+    "storage.*"
   ],
   "modes": {
     "window": {

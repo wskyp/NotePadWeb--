@@ -220,6 +220,9 @@
     };
   }
 
+  var STORE_SETTINGS = "notepadmm_settings";
+  var STORE_NATIVE_SESSION = "notepadmm_nativeSession";
+
   function loadSettings() {
     var defaults = {
       theme: "classic", fontSize: 14,
@@ -237,8 +240,31 @@
     return defaults;
   }
 
+  function applySavedSettings(raw) {
+    if (!raw) return;
+    try {
+      var saved = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!saved) return;
+      Object.keys(settings).forEach(function (k) {
+        if (saved[k] != null) settings[k] = saved[k];
+      });
+      applySettings();
+    } catch (e) { /* ignore */ }
+  }
+
   function saveSettings() {
-    localStorage.setItem("notepadmm.settings", JSON.stringify(settings));
+    var raw = JSON.stringify(settings);
+    try { localStorage.setItem("notepadmm.settings", raw); } catch (e) { /* ignore */ }
+    if (ND.desktop && ND.desktop.inDesktop() && ND.desktop.storeSet) {
+      ND.desktop.storeSet(STORE_SETTINGS, raw);
+    }
+  }
+
+  function hydrateDesktopSettings() {
+    if (!ND.desktop || !ND.desktop.storeGet) return Promise.resolve();
+    return ND.desktop.storeGet(STORE_SETTINGS).then(function (raw) {
+      applySavedSettings(raw);
+    }).catch(function () {});
   }
 
   function svgWrap(name) { return ICONS[name] || ""; }
@@ -4158,7 +4184,7 @@
     return { roots: roots, files: files, active: active };
   }
 
-  function writeNativeSession() {
+  function nativeSessionPayload() {
     var roots = [];
     var files = [];
     var active = 0;
@@ -4169,9 +4195,15 @@
       files.push(d.absPath);
     });
     if (active >= files.length) active = 0;
-    try {
-      localStorage.setItem("notepadmm.nativeSession", JSON.stringify({ roots: roots, files: files, active: active }));
-    } catch (e) { /* 配额不足时下次再记 */ }
+    return { roots: roots, files: files, active: active };
+  }
+
+  function writeNativeSession() {
+    var payload = nativeSessionPayload();
+    var raw = JSON.stringify(payload);
+    try { localStorage.setItem("notepadmm.nativeSession", raw); } catch (e) { /* ignore */ }
+    if (ND.desktop && ND.desktop.storeSet) return ND.desktop.storeSet(STORE_NATIVE_SESSION, raw);
+    return Promise.resolve();
   }
 
   async function restoreNativeSession() {
@@ -4179,7 +4211,13 @@
     var folders = 0;
     var opened = [];
     try {
-      var raw = localStorage.getItem("notepadmm.nativeSession");
+      var raw = null;
+      if (ND.desktop && ND.desktop.storeGet) {
+        raw = await ND.desktop.storeGet(STORE_NATIVE_SESSION);
+      }
+      if (!raw) {
+        try { raw = localStorage.getItem("notepadmm.nativeSession"); } catch (e) { raw = null; }
+      }
       var saved = raw ? JSON.parse(raw) : null;
       if (!saved || (!(saved.roots && saved.roots.length) && !(saved.files && saved.files.length))) return;
       var roots = saved.roots || [];
@@ -4220,14 +4258,14 @@
     } finally {
       state.hydrating = false;
     }
-    if (done) writeNativeSession();
+    if (done) await writeNativeSession();
   }
 
   function rememberSession() {
     if (state.hydrating) return;
     if (ND.desktop.inDesktop()) {
       clearTimeout(rememberSession._t);
-      rememberSession._t = setTimeout(writeNativeSession, 200);
+      rememberSession._t = setTimeout(function () { writeNativeSession(); }, 200);
       return;
     }
     clearTimeout(rememberSession._t);
@@ -4369,16 +4407,17 @@
     }
     window.addEventListener("error", function (e) { toast(e.message || "脚本错误"); });
     if (ND.desktop.inDesktop()) {
-      ND.desktop.ready().then(function () {
-        restoreNativeSession();
-      }).catch(function () {
-        restoreNativeSession();
-      });
+      ND.desktop.ready()
+        .then(hydrateDesktopSettings)
+        .then(function () { return restoreNativeSession(); })
+        .catch(function () { return restoreNativeSession(); });
       ND.desktop.onWindowClose(function () {
-        var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
-        if (!dirty) return true;
-        return ask("退出", "有未保存的修改。退出后这些修改会丢掉。", [["cancel", "留下"], ["ok", "仍要退出", true]]).then(function (ans) {
-          return ans === "ok";
+        return Promise.resolve(writeNativeSession()).then(function () {
+          var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
+          if (!dirty) return true;
+          return ask("退出", "有未保存的修改。退出后这些修改会丢掉。", [["cancel", "留下"], ["ok", "仍要退出", true]]).then(function (ans) {
+            return ans === "ok";
+          });
         });
       });
     } else restoreSession();
