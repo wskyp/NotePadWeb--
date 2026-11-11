@@ -142,24 +142,99 @@ ND.desktop = (function () {
     });
   }
 
+  function shellQuote(value) {
+    var s = String(value == null ? "" : value);
+    if (onWindows()) return "'" + s.replace(/'/g, "''") + "'";
+    return "'" + s.replace(/'/g, "'\\''") + "'";
+  }
+
+  function listLinkInfo(dir) {
+    var cmd;
+    if (onWindows()) {
+      // LinkType 覆盖符号链接；ReparsePoint 再兜底 junction 等重解析点。
+      cmd = "powershell -NoProfile -Command " +
+        "\"Get-ChildItem -LiteralPath " + shellQuote(dir) + " -Force | " +
+        "Where-Object { $_.LinkType -or (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) } | " +
+        "ForEach-Object { $_.Name + [char]9 + ($(if ($_.LinkType) { $_.LinkType } else { 'Reparse' })) + [char]9 + " +
+        "((@($_.Target) | ForEach-Object { $_ }) -join ';') }\"";
+    } else {
+      cmd = "find " + shellQuote(dir) + " -mindepth 1 -maxdepth 1 -type l -printf '%f\\t%l\\n'";
+    }
+    return Neutralino.os.execCommand(cmd).then(function (res) {
+      var map = {};
+      String((res && res.stdOut) || "").split(/\r?\n/).forEach(function (line) {
+        line = String(line || "").replace(/^\uFEFF/, "").trim();
+        if (!line) return;
+        var parts = line.split("\t");
+        var name = parts[0];
+        if (!name) return;
+        if (onWindows()) {
+          map[name] = {
+            kind: parts[1] || "symlink",
+            target: parts.slice(2).join("\t") || ""
+          };
+        } else {
+          map[name] = {
+            kind: "symlink",
+            target: parts.slice(1).join("\t") || ""
+          };
+        }
+      });
+      return map;
+    }, function () {
+      return {};
+    });
+  }
+
   function listDir(path) {
-    return Neutralino.filesystem.readDirectory(path).then(function (entries) {
+    return Promise.all([
+      Neutralino.filesystem.readDirectory(path),
+      listLinkInfo(path)
+    ]).then(function (pair) {
+      var entries = pair[0] || [];
+      var links = pair[1] || {};
+      var seen = Object.create(null);
       var items = [];
-      (entries || []).forEach(function (entry) {
+      entries.forEach(function (entry) {
         if (!entry || entry.entry === "." || entry.entry === "..") return;
+        var name = entry.entry;
+        seen[name] = true;
+        var link = links[name];
+        var other = entry.type === "OTHER";
         items.push({
-          name: entry.entry,
+          name: name,
           kind: entry.type === "DIRECTORY" ? "dir" : "file",
-          path: joinPath(path, entry.entry),
-          mtime: 0
+          path: entry.path || joinPath(path, name),
+          mtime: 0,
+          size: 0,
+          link: !!(link || other),
+          linkTarget: (link && link.target) || "",
+          broken: false
+        });
+      });
+      // Neutralino 有时会漏掉软链接项，用本机查询补上。
+      Object.keys(links).forEach(function (name) {
+        if (seen[name]) return;
+        items.push({
+          name: name,
+          kind: "file",
+          path: joinPath(path, name),
+          mtime: 0,
+          size: 0,
+          link: true,
+          linkTarget: links[name].target || "",
+          broken: false
         });
       });
       return Promise.all(items.map(function (item) {
         return Neutralino.filesystem.getStats(item.path).then(function (stats) {
           item.mtime = stats.modifiedAt || 0;
           item.size = stats.size || 0;
+          item.kind = stats.isDirectory ? "dir" : "file";
+          item.broken = false;
           return item;
         }, function () {
+          item.broken = !!item.link;
           return item;
         });
       }));

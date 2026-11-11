@@ -526,6 +526,7 @@
   var FOLLOW_POLL_MS = 800;
   var followTimer = 0;
   var followBusy = false;
+  var ARCHIVE_UNWRAP_MAX = 32 * 1024 * 1024;
   var HEX_WINDOW_BYTES = 1024 * 1024;
   var WRAP_LINE_CAP = 20000;
   var FIND_HIT_CAP = 400;
@@ -604,6 +605,9 @@
     var lines = [];
     if (d && d.following) {
       lines.push("正在跟踪日志（类似 tail -f）：只显示末尾约 " + formatBytes(FOLLOW_TAIL_BYTES) + "，有新内容会自动追加并滚到底。再点「视图 → 跟踪日志」可停止。");
+    }
+    if (d && d.fromArchive) {
+      lines.push("当前显示的是压缩包「" + d.fromArchive.archive + "」内的「" + (d.fromArchive.entry || d.name) + "」。直接保存不会写回压缩包，请用另存为导出文本。");
     }
     if (d && d.truncated && !d.following) lines.push(truncationText(d));
     if (d && d.noWrap && settings.wrap) lines.push("这个文件有 " + d.model.lines.length + " 行，自动换行已暂停，避免把每一行都拆开重排。");
@@ -872,6 +876,48 @@
     return n > 0 && odd / n > 0.08;
   }
 
+  function archiveHintName(name) {
+    var lower = String(name || "").toLowerCase();
+    if (/\.zip$/i.test(lower)) return true;
+    if (/\.gz$/i.test(lower) && !/\.tar\.gz$/i.test(lower) && !/\.tgz$/i.test(lower)) return true;
+    return false;
+  }
+
+  async function openUnwrappedArchive(file, extra, rawBytes, unwrapped) {
+    var innerName = unwrapped.name || "unzipped.txt";
+    var bytes = unwrapped.bytes;
+    var doc = createDoc(innerName);
+    doc.file = file;
+    doc.path = (extra.absPath || extra.path || file.name) + " → " + (unwrapped.entryPath || innerName);
+    doc.absPath = extra.absPath || null;
+    doc.handle = extra.handle || null;
+    doc.parent = extra.parent || null;
+    doc.fromArchive = {
+      archive: file.name,
+      entry: unwrapped.entryPath || innerName,
+      kind: unwrapped.kind || "zip"
+    };
+    doc.originalBytes = bytes;
+    doc.bytes = bytes;
+    doc.totalSize = bytes.length;
+    doc.truncated = null;
+    var dec = ND.codec.decodeBytes(bytes);
+    var split = ND.codec.splitText(dec.text);
+    doc.encoding = dec.encoding;
+    doc.eol = split.eol;
+    doc.language = ND.Highlight.detect(innerName);
+    if (bytes.length > TEXT_PLAIN_BYTES) doc.language = "plaintext";
+    doc.model.setText(split.lines.join("\n"));
+    doc.model.markClean();
+    doc.baseText = bytes.length > TEXT_PLAIN_BYTES ? null : doc.model.text();
+    if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
+    addDoc(doc);
+    toast("已打开压缩包内的 " + innerName);
+    paintFileWarn();
+    if (doc.handle) forgetPending(doc.handle);
+    return doc;
+  }
+
   async function openFileObject(file, extra) {
     extra = extra || {};
     var total = typeof file.size === "number" ? file.size : -1;
@@ -883,6 +929,25 @@
       total = bytes.length;
     }
     var probe = bytes || await readFileSlice(file, 0, Math.min(total, 8192));
+    var maybeArchive = archiveHintName(file.name) || (ND.Zip && (ND.Zip.isZip(probe) || ND.Zip.isGzip(probe)));
+    if (maybeArchive && ND.Zip && total >= 0 && total <= ARCHIVE_UNWRAP_MAX) {
+      if (!bytes) bytes = await readFileSlice(file, 0, total);
+      try {
+        var unwrapped = await ND.Zip.tryUnwrapText(bytes, file.name);
+        if (unwrapped && unwrapped.bytes) {
+          return openUnwrappedArchive(file, extra, bytes, unwrapped);
+        }
+        if (unwrapped && unwrapped.kind === "zip" && unwrapped.entryCount > 1) {
+          toast("压缩包内有 " + unwrapped.entryCount + " 个文件，请先解压再打开");
+        } else if (unwrapped && unwrapped.binary) {
+          toast("压缩包内是单个二进制文件，已用十六进制打开压缩包本身");
+        }
+      } catch (err) {
+        /* 解压失败则按普通文件继续 */
+      }
+    } else if (maybeArchive && total > ARCHIVE_UNWRAP_MAX) {
+      toast("压缩包超过 " + formatBytes(ARCHIVE_UNWRAP_MAX) + "，未自动解压预览");
+    }
     var binary = looksBinary(probe);
     if (!bytes && binary && total > TEXT_CUT_BYTES) {
       var hexN = Math.min(total, HEX_WINDOW_BYTES);
@@ -977,6 +1042,11 @@
     if (!doc) return false;
     if (doc.following) {
       toast("跟踪日志时为只读，请先停止跟踪再保存");
+      return false;
+    }
+    if (doc.fromArchive && !saveAs) {
+      toast("内容来自压缩包，直接保存不会写回压缩包。请用「另存为」导出文本。");
+      paintFileWarn();
       return false;
     }
     if (doc.truncated && !saveAs) {
@@ -1169,6 +1239,9 @@
           kind: entry.kind === "dir" ? "dir" : "file",
           absPath: entry.path,
           mtime: entry.mtime || 0,
+          link: !!entry.link,
+          linkTarget: entry.linkTarget || "",
+          broken: !!entry.broken,
           parent: node,
           children: entry.kind === "dir" ? null : undefined,
           expanded: false
@@ -1599,15 +1672,20 @@
       var twist = n.kind === "dir" ? (n.expanded ? "▾" : "▸") : "";
       var icon = n.kind === "dir" ? "📁" : fileIcon(n.name);
       var rootCls = isRoot(n) ? " root" : "";
+      var linkCls = n.link ? " is-link" : "";
+      var brokenCls = n.broken ? " is-broken" : "";
       var closer = isRoot(n) ? '<button type="button" class="root-x" data-remove-root="' + n.nid + '" title="从侧栏移除">×</button>' : "";
       var timeText = formatMtime(n.mtime);
       var timeHtml = timeText ? '<span class="ntime" title="修改时间">' + ND.esc(timeText) + "</span>" : '<span class="ntime"></span>';
+      var linkMark = n.link ? '<span class="nlink" title="软链接">↪</span>' : "";
       var tipParts = [];
-      if (n.kind === "dir") tipParts.push(displayPath(n));
+      if (n.link) tipParts.push(n.broken ? "无效软链接" : "软链接");
+      if (n.linkTarget) tipParts.push("→ " + n.linkTarget);
+      if (n.kind === "dir" || n.absPath) tipParts.push(displayPath(n));
       if (n.mtime) tipParts.push("修改于 " + formatMtimeFull(n.mtime));
       var tip = tipParts.length ? ' title="' + ND.esc(tipParts.join(" · ")) + '"' : "";
       var onCls = state.treeFocusNid === n.nid ? " locate on" : "";
-      html += '<div class="node' + rootCls + onCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + timeHtml + closer + "</div>" + childHtml;
+      html += '<div class="node' + rootCls + linkCls + brokenCls + onCls + '" data-nid="' + n.nid + '"' + tip + ' style="padding-left:' + (6 + depth * 14) + 'px"><span class="tw">' + twist + "</span><span>" + icon + '</span><span class="nname">' + ND.esc(n.name) + "</span>" + linkMark + timeHtml + closer + "</div>" + childHtml;
     }
     return html;
   }
@@ -1635,7 +1713,9 @@
   }
 
   function fileIcon(name) {
-    var ext = (name.split(".").pop() || "").toLowerCase();
+    var lower = String(name || "").toLowerCase();
+    var ext = (lower.split(".").pop() || "");
+    if (ext === "zip" || ext === "gz" || /\.tar\.gz$/.test(lower) || ext === "tgz") return "📦";
     if (ext === "js" || ext === "ts") return "🟨";
     if (ext === "py") return "🐍";
     if (ext === "html" || ext === "htm") return "🟧";
@@ -1648,10 +1728,20 @@
   async function onTreeClick(nid) {
     var node = state.nodeMap.get(Number(nid));
     if (!node) return;
+    if (node.broken) {
+      toast("软链接无效或目标不存在" + (node.linkTarget ? "：" + node.linkTarget : ""));
+      return;
+    }
     if (node.kind === "dir") {
       node.expanded = !node.expanded;
       if (node.expanded && node.children == null && (node.handle || node.absPath)) {
-        await loadChildren(node);
+        try {
+          await loadChildren(node);
+        } catch (err) {
+          node.expanded = false;
+          node.children = null;
+          toast("无法打开" + (node.link ? "软链接" : "") + "目录：" + (err && err.message ? err.message : err));
+        }
       }
       renderSide();
       return;
@@ -3802,8 +3892,13 @@
     handle.addEventListener("mousedown", function (e) {
       e.preventDefault();
       function move(ev) {
-        if (horizontal) $("#side").style.width = Math.max(140, Math.min(520, ev.clientX)) + "px";
-        else $("#panel").style.height = Math.max(80, Math.min(420, window.innerHeight - ev.clientY)) + "px";
+        if (horizontal) {
+          // 仅保留编辑区一点最小宽度，侧栏可几乎拉满窗口
+          var sideMax = Math.max(140, window.innerWidth - 120);
+          $("#side").style.width = Math.max(140, Math.min(sideMax, ev.clientX)) + "px";
+        } else {
+          $("#panel").style.height = Math.max(80, Math.min(420, window.innerHeight - ev.clientY)) + "px";
+        }
       }
       function up() {
         document.removeEventListener("mousemove", move);

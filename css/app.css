@@ -179,7 +179,9 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 #sideBody { flex: 1; overflow: auto; min-height: 0; padding-bottom: 8px; }
 .tree-empty { color: var(--muted); padding: 12px; }
 .node {
-  display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 8px; cursor: default; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 8px;
+  cursor: default; white-space: nowrap; box-sizing: border-box;
+  width: max-content; min-width: 100%;
 }
 .node:hover { background: var(--hover); }
 .node.on, .node.locate { background: var(--down); }
@@ -193,7 +195,13 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .root-x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
 .root-x:hover { background: var(--down); color: var(--text); }
 .tw { width: 12px; text-align: center; color: var(--muted); flex: none; }
-.nname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.nname { flex: none; overflow: visible; }
+.node.is-link .nname { font-style: italic; }
+.node.is-broken .nname { opacity: 0.55; text-decoration: line-through; }
+.nlink {
+  flex: none; color: var(--accent); font-size: 11px; line-height: 1;
+  border: 1px solid var(--line-2); border-radius: 2px; padding: 0 3px;
+}
 .ntime {
   margin-left: auto; flex: none; color: var(--muted); font-size: 11px;
   font-variant-numeric: tabular-nums; padding-left: 8px; letter-spacing: 0;
