@@ -1,9 +1,10 @@
-/* global ND, chrome */
+/* global ND, chrome, Neutralino */
 var ND = ND || {};
 
 ND.track = (function () {
   "use strict";
 
+  var INSTALL_KEY = "notepadmm_installId";
   var sessionId = "";
   var installId = "";
   var ready = null;
@@ -18,8 +19,16 @@ ND.track = (function () {
     return "";
   }
 
+  function inExtension() {
+    return !!(ND.desktop && ND.desktop.inExtension());
+  }
+
+  function inDesktop() {
+    return !!(ND.desktop && ND.desktop.inDesktop());
+  }
+
   function enabled() {
-    return ND.desktop && ND.desktop.inExtension();
+    return (inExtension() || inDesktop()) && !!remoteUrl("cat");
   }
 
   function uuid() {
@@ -31,19 +40,64 @@ ND.track = (function () {
   }
 
   function version() {
-    try { return chrome.runtime.getManifest().version || ""; }
+    try {
+      if (inExtension() && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) {
+        return chrome.runtime.getManifest().version || "";
+      }
+    } catch (err) { /* ignore */ }
+    return String((ND && ND.APP_VERSION) || "");
+  }
+
+  function readLocalInstallId() {
+    try { return localStorage.getItem("notepadmm.installId") || localStorage.getItem(INSTALL_KEY) || ""; }
     catch (err) { return ""; }
+  }
+
+  function writeLocalInstallId(id) {
+    try { localStorage.setItem("notepadmm.installId", id); } catch (err) { /* ignore */ }
+  }
+
+  function readDesktopInstallId() {
+    if (typeof Neutralino !== "undefined" && Neutralino.storage && typeof Neutralino.storage.getData === "function") {
+      return Neutralino.storage.getData(INSTALL_KEY).then(function (data) {
+        return data == null ? "" : String(data);
+      }).catch(function () { return ""; });
+    }
+    return Promise.resolve(readLocalInstallId());
+  }
+
+  function writeDesktopInstallId(id) {
+    writeLocalInstallId(id);
+    if (typeof Neutralino !== "undefined" && Neutralino.storage && typeof Neutralino.storage.setData === "function") {
+      return Neutralino.storage.setData(INSTALL_KEY, id).catch(function () {});
+    }
+    return Promise.resolve();
   }
 
   function ensureId() {
     if (installId) return Promise.resolve(installId);
     if (!ready) {
       ready = Promise.resolve().then(function () {
-        return chrome.storage.local.get("installId");
-      }).then(function (data) {
-        if (data && data.installId) return data.installId;
-        var id = uuid();
-        return chrome.storage.local.set({ installId: id }).then(function () { return id; });
+        if (inExtension()) {
+          return chrome.storage.local.get("installId").then(function (data) {
+            if (data && data.installId) return data.installId;
+            var id = uuid();
+            return chrome.storage.local.set({ installId: id }).then(function () { return id; });
+          });
+        }
+        var boot = (inDesktop() && ND.desktop.ready) ? ND.desktop.ready() : Promise.resolve();
+        return boot.then(function () {
+          var cached = readLocalInstallId();
+          if (cached) return cached;
+          return readDesktopInstallId().then(function (id) {
+            if (id) {
+              writeLocalInstallId(id);
+              return id;
+            }
+            var created = uuid();
+            return writeDesktopInstallId(created).then(function () { return created; });
+          });
+        });
       }).then(function (id) {
         installId = id;
         return id;
@@ -58,6 +112,7 @@ ND.track = (function () {
   function send(event, action, durationMs) {
     try {
       if (!enabled()) return;
+      if (!sessionId) sessionId = uuid();
       ensureId().then(function (id) {
         var opts = {
           method: "POST",
@@ -90,6 +145,15 @@ ND.track = (function () {
     }
   }
 
+  function flushLeave() {
+    try {
+      if (!enabled() || left || !sessionId) return;
+      left = true;
+      markVisible();
+      send("leave", "leave", visibleMs);
+    } catch (err) {}
+  }
+
   function start() {
     try {
       if (!enabled() || sessionId) return;
@@ -97,14 +161,8 @@ ND.track = (function () {
       visibleSince = Date.now();
       send("open", "open", 0);
       document.addEventListener("visibilitychange", markVisible);
-      window.addEventListener("pagehide", function () {
-        try {
-          if (left) return;
-          left = true;
-          markVisible();
-          send("leave", "leave", visibleMs);
-        } catch (err) {}
-      });
+      window.addEventListener("pagehide", flushLeave);
+      window.addEventListener("beforeunload", flushLeave);
     } catch (err) {}
   }
 
@@ -158,7 +216,7 @@ ND.track = (function () {
   function downloadUpdate(url) {
     return new Promise(function (resolve, reject) {
       try {
-        if (!enabled() || !chrome.downloads || !chrome.downloads.download) {
+        if (!inExtension() || !chrome.downloads || !chrome.downloads.download) {
           reject(new Error("当前环境不能下载更新"));
           return;
         }
@@ -210,7 +268,7 @@ ND.track = (function () {
   }
 
   function update() {
-    if (!enabled()) return Promise.reject(new Error("只有 Chrome 插件可以使用更新"));
+    if (!inExtension()) return Promise.reject(new Error("只有 Chrome 插件可以使用更新"));
     var local = version();
     return fetchUpdateInfo().then(function (info) {
       if (info.version && !versionNewer(info.version, local)) {
@@ -230,6 +288,7 @@ ND.track = (function () {
   return {
     start: start,
     action: action,
+    flushLeave: flushLeave,
     update: update,
     reloadExtension: reloadExtension,
     version: version

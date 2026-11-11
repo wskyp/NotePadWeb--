@@ -5,6 +5,7 @@
 角色分工：
 
 - **插件客户端**：打开页面时打点；用户点「帮助 → 更新插件」时查版本并下载 zip
+- **桌面客户端**：打开窗口时同样打点（`/cat`）；查版本 / 下载更新仍仅插件提供
 - **发布方 / CI**：有新版本时，把 zip 和版本号上传到服务器；之后所有插件用户都从同一台服务器拉更新
 
 配置与范围：
@@ -15,7 +16,7 @@
   - `NOTEPADWEB_REMOTE_BASE_PATH` 或 `NOTEPADWEB_BASE_PATH`
 - 打包时：`npm run build` / `npm run chrome` 会先跑 `node tools/remote_config.js`，若设了上述环境变量会写入 `js/remote-config.js` 并同步插件 `host_permissions`
 - 桌面端运行时：Neutralino / Electron 启动时也会读同名环境变量并覆盖内置地址（不必重打包）
-- 插件侧调用：只有作为 Chrome / Edge 插件运行时才会打点 / 查版本 / 下载
+- 打点：Chrome / Edge 插件与桌面端（Electron / Neutralino）都会 `POST /cat`；查版本 / 下载更新仅插件
 - 上传接口：给发布方使用，**不要**做进普通用户插件菜单
 - 当前文件内默认：`origin = http://129.0.0.1`，`basePath = /eda_agent/notepad_web`
 
@@ -25,7 +26,7 @@
 
 | 用途 | 调用方 | 方法 | 路径 |
 |---|---|---|---|
-| 使用打点 | 插件 | `POST` | `/eda_agent/notepad_web/cat` |
+| 使用打点 | 插件 / 桌面端 | `POST` | `/eda_agent/notepad_web/cat` |
 | 查询版本 | 插件 | `GET` | `/eda_agent/notepad_web/version` |
 | 下载更新包 | 插件 | `GET` | `/eda_agent/notepad_web/update.zip`（也可由 version 返回的 `url` 指定） |
 | 上传新版本 | 发布方 / CI | `POST` | `/eda_agent/notepad_web/upload` |
@@ -79,9 +80,9 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `installId` | string | 是 | 这一次插件安装的随机编号（UUID）。不卸载则一直不变 |
-| `sessionId` | string | 是 | 这一次打开编辑页的编号（UUID） |
-| `version` | string | 是 | 插件 `manifest.json` 的 `version` |
+| `installId` | string | 是 | 本机安装随机编号（UUID）。插件存 `chrome.storage.local`；桌面端存本机 storage / localStorage，不卸载则一直不变 |
+| `sessionId` | string | 是 | 这一次打开编辑页 / 窗口的编号（UUID） |
+| `version` | string | 是 | 插件为 `manifest.json` 的 `version`；桌面端为 `package.json` / `ND.APP_VERSION` |
 | `event` | string | 是 | `open` / `action` / `leave` |
 | `action` | string | 是 | 具体操作名；`open` / `leave` 时与 `event` 相同 |
 | `ts` | number | 是 | 客户端发送时的 Unix 毫秒时间戳 |

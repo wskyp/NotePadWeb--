@@ -4467,8 +4467,8 @@
     window.__ndd = { state: state, editor: editor, settings: settings, run: run, ND: ND };
     if (ND.desktop.inExtension()) {
       try { chrome.runtime.sendMessage({ type: "editor-ready" }); } catch (err) { /* 后台未就绪时仍可继续编辑 */ }
-      try { if (ND.track) ND.track.start(); } catch (err) {}
     }
+    try { if (ND.track) ND.track.start(); } catch (err) {}
     window.addEventListener("error", function (e) { toast(e.message || "脚本错误"); });
     if (ND.desktop.inDesktop()) {
       ND.desktop.ready()
@@ -4478,8 +4478,14 @@
       ND.desktop.onWindowClose(function () {
         return Promise.resolve(writeNativeSession()).then(function () {
           var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
-          if (!dirty) return true;
+          if (!dirty) {
+            try { if (ND.track && ND.track.flushLeave) ND.track.flushLeave(); } catch (err) {}
+            return true;
+          }
           return ask("退出", "有未保存的修改。退出后这些修改会丢掉。", [["cancel", "留下"], ["ok", "仍要退出", true]]).then(function (ans) {
+            if (ans === "ok") {
+              try { if (ND.track && ND.track.flushLeave) ND.track.flushLeave(); } catch (err) {}
+            }
             return ans === "ok";
           });
         });
