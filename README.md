@@ -18,9 +18,54 @@
 
 ## 桌面版
 
-桌面程序用 [Neutralino](https://neutralino.js.org/) 包同一套页面。Windows 和 Linux 都走本机文件：打开文件夹拿到真实路径，`Ctrl+S` 写回原文件，下次启动会按路径重新打开。浏览器里打开 `index.html` 的用法仍然保留。
+桌面程序包同一套页面，打开文件夹拿到真实路径，`Ctrl+S` 写回原文件。浏览器里打开 `index.html` 的用法仍然保留。
 
 需要 Node.js。
+
+### 推荐：Electron AppImage（Linux 单文件，少挑发行版）
+
+自带 Chromium，一般不依赖系统 WebKitGTK，适合「拷一个文件就能跑」：
+
+```bash
+npm install
+npm run electron              # 开发：直接开窗口
+npm run electron:appimage     # 在 Linux 上打 AppImage
+```
+
+产物：`../NotePadWeb-release/electron/NotePadWeb-*-linux-x86_64.AppImage`
+
+目标机：
+
+```bash
+chmod +x NotePadWeb-*-linux-x86_64.AppImage
+./NotePadWeb-*-linux-x86_64.AppImage
+```
+
+说明：
+
+- **请在 Linux 上执行** `electron:appimage`（AppImage 需 Linux 环境或 Docker；Windows 本机通常打不出可用的 AppImage）
+- 体积大约一百多 MB（内含 Chromium）
+- 需要图形界面（本机桌面或已设置 `DISPLAY`）
+
+同一系统账号要**多开多份互不覆盖**时，给每个实例指定不同数据目录（设置、上次打开的文件夹等都会分开）：
+
+```bash
+# 方式 1：起一个命名实例（数据在默认配置目录下的 instances/ 里）
+./NotePadWeb-*.AppImage --instance=A
+./NotePadWeb-*.AppImage --instance=B
+
+# 方式 2：显式指定绝对路径
+./NotePadWeb-*.AppImage --data-dir="$HOME/.notepadweb-work"
+./NotePadWeb-*.AppImage --data-dir="$HOME/.notepadweb-temp"
+
+# 方式 3：环境变量
+NOTEPADWEB_DATA_DIR="$HOME/.notepadweb-work" ./NotePadWeb-*.AppImage
+NOTEPADWEB_INSTANCE=A ./NotePadWeb-*.AppImage
+```
+
+开发时同样可用：`npm run electron -- --instance=A`。窗口标题会带上实例名，便于区分。
+
+### 备选：Neutralino（体积小，依赖系统 WebKit）
 
 ```bash
 npm install
@@ -28,20 +73,18 @@ npm run setup
 npm run desktop
 ```
 
-`npm run setup` 下载各平台的 Neutralino 运行时。`npm run desktop` 打开桌面窗口。
-
 打包：
 
 ```bash
 npm run build
 ```
 
-产物不在这个仓库里，而在上一级目录的 `NotePadWeb-release`。在 Windows 上打包也会同时得到 Linux 包，因为 Linux 运行时是现成的二进制，和同一份 `resources.neu` 放在一起。打包结束后，仓库里的下载文件和中间目录会被清掉。
+产物在上一级目录的 `NotePadWeb-release`。
 
-- `NotePadWeb-release/NotePadWeb-windows.zip`：解压后运行 `NotePadWeb-win_x64.exe`。Windows 10/11 一般已经带有 WebView2。
-- `NotePadWeb-release/NotePadWeb`：Linux 上的一个可执行文件。拷到 CentOS 7 后执行 `chmod +x NotePadWeb && ./NotePadWeb`。它自带 `libpng16` 和较新的 `libstdc++`，并关掉 WebKit 的 OpenGL 合成，避免没有显卡时因为缺少 `swrast_dri.so` 起不了窗口。系统里仍要有 GTK3 和 WebKitGTK（CentOS 7：`sudo yum install gtk3`，以及 EPEL 的 `webkitgtk4`）。Debian/Ubuntu 上对应 `libgtk-3-0` 与 `libwebkit2gtk-4.1-0` 或 `libwebkit2gtk-4.0-37`。需要已经登录的图形会话；没有显示器、也没有设置 `DISPLAY` 的机器开不出窗口。
+- `NotePadWeb-windows.zip`：解压后运行 `NotePadWeb-win_x64.exe`（需 WebView2）
+- `NotePadWeb` / `NotePadWeb-linux/`：Linux 小包，**系统需 GTK3 + WebKitGTK**，发行版差异较大
 
-页面资源打进 `resources.neu`，和对应平台的小运行时放在一起。运行时本身不包含网页引擎，所以 Linux 包只有几兆，引擎用系统里的那一份。
+若目标是「尽量不挑 Linux 版本」，优先用上面的 Electron AppImage。
 
 ## 能做什么
 
@@ -110,13 +153,14 @@ js/markdown.js      Markdown 转 HTML
 js/codec.js         编码、换行、MD5、SHA-256
 js/gbk.js           生成好的 GBK 编码表，不要手改
 js/diff.js          行对比；大文件用唯一行作锚点，短行再做字符级差异
-js/native.js        桌面版的本机文件接口；浏览器里打开时不生效
+js/native.js        桌面版的本机文件接口（Electron / Neutralino）；浏览器里打开时不生效
 js/app.js           菜单、标签、文件夹、设置和各种命令
-neutralino.config.json  桌面窗口和打包配置
+electron/           Electron 主进程、预加载与本机文件桥
+neutralino.config.json  Neutralino 桌面窗口和打包配置
 tools/gen_gbk.py    重新生成 js/gbk.js
 tools/gen_icon.js   打包时生成窗口图标
-tools/stage_frontend.js  打包前把页面收进临时目录
-tools/pack_desktop.js    把 Windows / Linux 包放到仓库外
+tools/stage_frontend.js  Neutralino 打包前把页面收进临时目录
+tools/pack_desktop.js    把 Neutralino Windows / Linux 包放到仓库外
 tools/centos7-libs/      CentOS 7 随包的 libpng16、libstdc++、libgcc_s
 tools/clean.js      清掉打包留下的中间文件
 ```

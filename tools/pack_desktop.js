@@ -45,8 +45,12 @@ if (!fs.existsSync(resources)) {
 var winNames = fs.readdirSync(stage).filter(function (name) {
   return name === "resources.neu" || /-win_/.test(name) || /\.dll$/i.test(name);
 });
-zipFiles(stage, winNames, path.join(outDir, "NotePadWeb-windows.zip"));
-console.log("Windows 包 " + path.join(outDir, "NotePadWeb-windows.zip"));
+if (process.platform === "win32" && winNames.length) {
+  zipFiles(stage, winNames, path.join(outDir, "NotePadWeb-windows.zip"));
+  console.log("Windows 包 " + path.join(outDir, "NotePadWeb-windows.zip"));
+} else if (process.platform !== "win32") {
+  console.log("非 Windows 环境，跳过 Windows 包");
+}
 
 var linuxName = "NotePadWeb-linux_x64";
 if (!fs.existsSync(path.join(stage, linuxName))) {

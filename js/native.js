@@ -6,8 +6,20 @@ ND.desktop = (function () {
 
   var started = null;
 
-  function inDesktop() {
+  function inElectron() {
+    try {
+      return !!(typeof window !== "undefined" && window.notepadDesktop && typeof window.notepadDesktop.invoke === "function");
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function inNeutralino() {
     return typeof Neutralino !== "undefined" && !!window.NL_PORT;
+  }
+
+  function inDesktop() {
+    return inElectron() || inNeutralino();
   }
 
   function inExtension() {
@@ -20,6 +32,7 @@ ND.desktop = (function () {
 
   function ready() {
     if (!inDesktop()) return Promise.resolve();
+    if (inElectron()) return Promise.resolve();
     if (!started) {
       started = new Promise(function (resolve, reject) {
         try {
@@ -39,6 +52,7 @@ ND.desktop = (function () {
   }
 
   function onWindows() {
+    if (inElectron() && window.notepadDesktop.platform) return window.notepadDesktop.platform === "win32";
     return window.NL_OS === "Windows" || /Win/i.test(navigator.platform || "");
   }
 
@@ -91,20 +105,24 @@ ND.desktop = (function () {
   }
 
   function pickFiles() {
+    if (inElectron()) return window.notepadDesktop.invoke("pick_files");
     return Neutralino.os.showOpenDialog("打开文件", { multiSelections: true }).then(function (paths) {
       return paths && paths.length ? paths : null;
     }, function () { return null; });
   }
 
   function pickFolder() {
+    if (inElectron()) return window.notepadDesktop.invoke("pick_folder");
     return Neutralino.os.showFolderDialog("打开文件夹").then(emptyToNull, function () { return null; });
   }
 
   function pickSave(suggested) {
+    if (inElectron()) return window.notepadDesktop.invoke("pick_save", { suggested: suggested });
     return Neutralino.os.showSaveDialog("另存为", { defaultPath: suggested || "untitled.txt" }).then(emptyToNull, function () { return null; });
   }
 
   function fileMeta(path) {
+    if (inElectron()) return window.notepadDesktop.invoke("file_meta", { path: path });
     return Neutralino.filesystem.getStats(path).then(function (stats) {
       return {
         name: baseName(path),
@@ -116,6 +134,7 @@ ND.desktop = (function () {
   }
 
   function readFileRange(path, start, len) {
+    if (inElectron()) return window.notepadDesktop.invoke("read_file_range", { path: path, start: start || 0, len: len || 0 });
     if (!len || len <= 0) return Promise.resolve("");
     return fileMeta(path).then(function (meta) {
       if (meta.isDir || start >= meta.size) return "";
@@ -127,6 +146,7 @@ ND.desktop = (function () {
   }
 
   function writeFile(path, data) {
+    if (inElectron()) return window.notepadDesktop.invoke("write_file", { path: path, data: data || "" });
     var bytes = base64ToBytes(data);
     var parent = parentOf(path);
     var tmp = joinPath(parent || ".", "." + baseName(path) + ".notepadweb-tmp");
@@ -187,6 +207,7 @@ ND.desktop = (function () {
   }
 
   function listDir(path) {
+    if (inElectron()) return window.notepadDesktop.invoke("list_dir", { path: path });
     return Promise.all([
       Neutralino.filesystem.readDirectory(path),
       listLinkInfo(path)
@@ -246,6 +267,7 @@ ND.desktop = (function () {
   }
 
   function createEntry(dir, name, kind) {
+    if (inElectron()) return window.notepadDesktop.invoke("create_entry", { dir: dir, name: name, kind: kind });
     if (!validName(name)) return Promise.reject(new Error("名称不合法"));
     var path = joinPath(dir, name);
     return fileMeta(path).then(function () {
@@ -257,6 +279,7 @@ ND.desktop = (function () {
   }
 
   function renamePath(path, name) {
+    if (inElectron()) return window.notepadDesktop.invoke("rename_path", { path: path, name: name });
     if (!validName(name)) return Promise.reject(new Error("名称不合法"));
     var parent = parentOf(path);
     if (!parent) return Promise.reject(new Error("没有上级目录"));
@@ -265,10 +288,12 @@ ND.desktop = (function () {
   }
 
   function removePath(path) {
+    if (inElectron()) return window.notepadDesktop.invoke("remove_path", { path: path });
     return Neutralino.filesystem.remove(path);
   }
 
   function resolvePath(base, rel) {
+    if (inElectron()) return window.notepadDesktop.invoke("resolve_path", { base: base, rel: rel });
     var parts = parentOf(base).split(/[\\/]/);
     String(rel || "").replace(/\\/g, "/").split("/").forEach(function (part) {
       if (!part || part === ".") return;
@@ -285,6 +310,12 @@ ND.desktop = (function () {
 
   function invoke(cmd, args) {
     args = args || {};
+    if (inElectron()) {
+      return window.notepadDesktop.invoke(cmd, args).catch(function (err) {
+        if (err instanceof Error) throw err;
+        return reject(err);
+      });
+    }
     return ready().then(function () {
       if (cmd === "pick_files") return pickFiles();
       if (cmd === "pick_folder") return pickFolder();
@@ -354,6 +385,10 @@ ND.desktop = (function () {
   }
 
   function onWindowClose(shouldExit) {
+    if (inElectron()) {
+      window.notepadDesktop.onCloseRequest(shouldExit);
+      return Promise.resolve();
+    }
     return ready().then(function () {
       Neutralino.events.on("windowClose", function () {
         var result;

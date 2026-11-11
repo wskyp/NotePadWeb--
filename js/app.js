@@ -4354,7 +4354,7 @@
     buildToolbar();
     bindUI();
     applySettings();
-    if (!window.isSecureContext) {
+    if (!window.isSecureContext && !ND.desktop.inDesktop()) {
       var banner = $("#banner");
       banner.dataset.kind = "local";
       banner.textContent = "现在是直接打开的本地页面，可以浏览和编辑。按 Ctrl+S 会把文件下载下来。若要覆盖原始文件，请用 Chrome 或 Edge 通过 http://localhost 打开这一页，再点「打开文件夹」。只有通过网址打开时，才会记住上次的文件夹和文件。点击本条可关闭。";
