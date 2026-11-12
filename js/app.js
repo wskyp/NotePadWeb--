@@ -549,9 +549,11 @@
   var TEXT_CUT_BYTES = 2000000;
   var TEXT_HEAD_BYTES = 1024 * 1024;
   var FOLLOW_TAIL_BYTES = 1024 * 1024;
-  var FOLLOW_POLL_MS = 800;
+  var FOLLOW_POLL_MS = 250;
+  var FOLLOW_CHUNK_MAX = 48 * 1024;
   var followTimer = 0;
   var followBusy = false;
+  var followKick = 0;
   var ARCHIVE_UNWRAP_MAX = 32 * 1024 * 1024;
   var HEX_WINDOW_BYTES = 1024 * 1024;
   var WRAP_LINE_CAP = 20000;
@@ -630,7 +632,7 @@
     var d = active();
     var lines = [];
     if (d && d.following) {
-      lines.push("正在跟踪日志（类似 tail -f）：只显示末尾约 " + formatBytes(FOLLOW_TAIL_BYTES) + "，有新内容会自动追加并滚到底。再点「视图 → 跟踪日志」可停止。");
+      lines.push("正在跟踪日志（类似 tail -f）：只显示末尾约 " + formatBytes(FOLLOW_TAIL_BYTES) + "，约每 0.25 秒检查并增量追加，滚到底。再点「视图 → 跟踪日志」可停止。");
     }
     if (d && d.fromArchive) {
       lines.push("当前显示的是压缩包「" + d.fromArchive.archive + "」内的「" + (d.fromArchive.entry || d.name) + "」。直接保存不会写回压缩包，请用另存为导出文本。");
@@ -752,7 +754,6 @@
     editor.render();
     var view = editor.view;
     if (view) view.scrollTop = view.scrollHeight;
-    editor.schedule();
   }
 
   function clearFollowTimer() {
@@ -760,6 +761,18 @@
       clearInterval(followTimer);
       followTimer = 0;
     }
+    if (followKick) {
+      clearTimeout(followKick);
+      followKick = 0;
+    }
+  }
+
+  function kickFollowSoon(doc) {
+    if (followKick) clearTimeout(followKick);
+    followKick = setTimeout(function () {
+      followKick = 0;
+      tickFollow(doc);
+    }, 16);
   }
 
   function syncFollowTimer() {
@@ -854,6 +867,7 @@
   async function tickFollow(doc) {
     if (followBusy || !doc || !doc.following || doc !== active() || editor.hexOn) return;
     followBusy = true;
+    var more = false;
     try {
       var meta = await followMeta(doc);
       var size = meta.size || 0;
@@ -865,28 +879,36 @@
         return;
       }
       if (size === offset) return;
-      var chunk = await followRead(doc, offset, size);
-      doc.followOffset = size;
+      var end = Math.min(size, offset + FOLLOW_CHUNK_MAX);
+      more = end < size;
+      var chunk = await followRead(doc, offset, end);
+      doc.followOffset = end;
       doc.totalSize = size;
       if (doc.truncated) doc.truncated.total = size;
       chunk = takeFollowComplete(doc, chunk, doc.encoding || "utf-8");
-      if (!chunk.length) return;
+      if (!chunk.length) {
+        if (more) kickFollowSoon(doc);
+        return;
+      }
       var text = decodeFollowBytes(chunk, doc.encoding || "utf-8", false);
-      if (!text) return;
+      if (!text) {
+        if (more) kickFollowSoon(doc);
+        return;
+      }
       text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      var cur = doc.model.text();
-      var next = cur ? cur + text : text;
-      doc.model.setText(next);
+      doc.model.appendText(text);
       doc.model.markClean();
       if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
       editor.wrap = !!settings.wrap && !doc.noWrap;
       scrollFollowEnd(doc);
       paintStatus();
     } catch (err) {
+      more = false;
       stopFollow(doc, true);
       toast("跟踪中断：" + (err && err.message ? err.message : err));
     } finally {
       followBusy = false;
+      if (more && doc && doc.following && doc === active()) kickFollowSoon(doc);
     }
   }
 

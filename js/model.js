@@ -1069,6 +1069,23 @@ var ND = ND || {};
     this.changed();
   };
 
+  // 跟踪日志用：只读模式下也可追加；不进撤销栈，避免整篇 setText。
+  DocModel.prototype.appendText = function (text) {
+    text = String(text == null ? "" : text);
+    if (!text) return;
+    if (!this.lines.length) this.lines = [""];
+    var parts = text.split("\n");
+    var last = this.lines.length - 1;
+    this.lines[last] = this.lines[last] + parts[0];
+    for (var i = 1; i < parts.length; i++) this.lines.push(parts[i]);
+    var line = this.lines.length - 1;
+    var col = this.lines[line].length;
+    this.cursor = { line: line, col: col };
+    this.anchor = { line: line, col: col };
+    this.prefCol = visualOf(this.lines[line], col, this.tabSize);
+    this.changed();
+  };
+
   DocModel.prototype.text = function () { return this.lines.join("\n"); };
 
   DocModel.prototype.matchBrackets = function () {
