@@ -54,6 +54,10 @@ if (process.platform === "win32" && winNames.length) {
 
 var linuxName = "NotePadWeb-linux_x64";
 if (!fs.existsSync(path.join(stage, linuxName))) {
+  if (process.platform === "win32") {
+    console.log("本机无 " + linuxName + "，跳过 Linux 包（请在 Linux 上打包）");
+    process.exit(0);
+  }
   console.error("找不到 " + linuxName);
   process.exit(1);
 }

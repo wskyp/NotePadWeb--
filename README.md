@@ -141,7 +141,7 @@ npm run build
 - 行号、书签、代码折叠、缩略图、空白字符、自动换行、缩放和全屏
 - 按扩展名高亮：JavaScript、TypeScript、Python、Java、C、C++、C#、Go、Rust、HTML、XML、CSS、JSON、SQL、Shell、YAML、Markdown、TCL、Verilog，以及常见配置文件
 - 打开 `.xlsx` / `.xlsm`：读取第一个工作表并转成 CSV 文本（可编辑、可另存为 CSV，不回写原 Excel）；不支持旧版 `.xls`
-- 侧栏里的文件夹树、已打开文档、函数 / 类列表；可以同时挂上多个文件夹
+- 侧栏里的文件夹树、已打开文档、函数 / 类列表；可以同时挂上多个文件夹；桌面端约每 2 秒自动刷新已加载的目录（增删改可反映到树上）
 - 查找和替换（区分大小写、全词、正则），以及在已打开文件夹里搜索
 - 跳转到行、匹配括号、行注释和块注释
 - 编码：UTF-8、UTF-8 BOM、GBK、GB18030、UTF-16 LE；打开时按 BOM 和内容判断，保存时按当前编码写回。换行支持 CRLF、LF、CR

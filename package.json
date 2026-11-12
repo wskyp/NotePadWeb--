@@ -1,7 +1,7 @@
 {
   "name": "notepadweb",
   "private": true,
-  "version": "1.8.1",
+  "version": "1.8.3",
   "description": "NotePadWeb-- desktop shell",
   "main": "electron/main.js",
   "scripts": {

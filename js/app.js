@@ -554,6 +554,9 @@
   var followTimer = 0;
   var followBusy = false;
   var followKick = 0;
+  var TREE_WATCH_MS = 2000;
+  var treeWatchTimer = 0;
+  var treeWatchBusy = false;
   var ARCHIVE_UNWRAP_MAX = 32 * 1024 * 1024;
   var HEX_WINDOW_BYTES = 1024 * 1024;
   var WRAP_LINE_CAP = 20000;
@@ -1426,6 +1429,127 @@
     });
   }
 
+  function clearTreeWatch() {
+    if (treeWatchTimer) {
+      clearInterval(treeWatchTimer);
+      treeWatchTimer = 0;
+    }
+  }
+
+  function hasDesktopRoots() {
+    return state.roots.some(function (r) { return !!(r && r.absPath); });
+  }
+
+  function syncTreeWatch() {
+    clearTreeWatch();
+    if (!ND.desktop.inDesktop() || !hasDesktopRoots()) return;
+    treeWatchTimer = setInterval(function () {
+      tickTreeWatch();
+    }, TREE_WATCH_MS);
+  }
+
+  function kidKey(absPath, name) {
+    if (absPath && ND.desktop.normAbs) return ND.desktop.normAbs(absPath);
+    return String(name || "").toLowerCase();
+  }
+
+  async function mergeReloadDir(node) {
+    if (!node || node.kind !== "dir" || !node.absPath || node.children == null) return false;
+    var entries = await ND.desktop.invoke("list_dir", { path: node.absPath });
+    var oldKids = node.children || [];
+    var byKey = Object.create(null);
+    oldKids.forEach(function (kid) {
+      byKey[kidKey(kid.absPath, kid.name)] = kid;
+    });
+    var next = [];
+    var structural = false;
+    (entries || []).forEach(function (entry) {
+      var kind = entry.kind === "dir" ? "dir" : "file";
+      var key = kidKey(entry.path, entry.name);
+      var old = byKey[key];
+      if (old && old.kind === kind) {
+        delete byKey[key];
+        old.name = entry.name;
+        old.absPath = entry.path;
+        old.mtime = entry.mtime || 0;
+        old.link = !!entry.link;
+        old.linkTarget = entry.linkTarget || "";
+        old.broken = !!entry.broken;
+        if (kind === "dir") {
+          if (old.children === undefined) old.children = null;
+        } else {
+          old.children = undefined;
+          old.expanded = false;
+        }
+        next.push(old);
+      } else {
+        structural = true;
+        next.push({
+          nid: state.nid++,
+          name: entry.name,
+          kind: kind,
+          absPath: entry.path,
+          mtime: entry.mtime || 0,
+          link: !!entry.link,
+          linkTarget: entry.linkTarget || "",
+          broken: !!entry.broken,
+          parent: node,
+          children: kind === "dir" ? null : undefined,
+          expanded: false
+        });
+      }
+    });
+    if (Object.keys(byKey).length) structural = true;
+    if (next.length !== oldKids.length) structural = true;
+    if (!structural) {
+      for (var i = 0; i < next.length; i++) {
+        if (!oldKids[i] || next[i] !== oldKids[i] || next[i].name !== oldKids[i].name) {
+          structural = true;
+          break;
+        }
+      }
+    }
+    sortNodes(next);
+    next.forEach(function (kid) { kid.parent = node; });
+    node.children = next;
+    bubbleDirMtime(node);
+
+    for (var j = 0; j < next.length; j++) {
+      var child = next[j];
+      if (child.kind !== "dir" || !child.expanded) continue;
+      if (child.children == null) {
+        await loadChildren(child);
+        structural = true;
+      } else if (await mergeReloadDir(child)) {
+        structural = true;
+      }
+    }
+    return structural;
+  }
+
+  async function tickTreeWatch() {
+    if (treeWatchBusy || state.hydrating || !ND.desktop.inDesktop()) return;
+    if (!hasDesktopRoots()) {
+      clearTreeWatch();
+      return;
+    }
+    treeWatchBusy = true;
+    var changed = false;
+    try {
+      for (var i = 0; i < state.roots.length; i++) {
+        var root = state.roots[i];
+        if (!root || !root.absPath) continue;
+        if (root.children == null) continue;
+        if (await mergeReloadDir(root)) changed = true;
+      }
+      if (changed && state.side === "tree") renderSide();
+    } catch (err) {
+      /* 单次失败不影响后续轮询 */
+    } finally {
+      treeWatchBusy = false;
+    }
+  }
+
   function isRoot(node) {
     return !!(node && state.roots.indexOf(node) >= 0);
   }
@@ -1460,6 +1584,7 @@
     if (!quiet) toast(msg);
     if (root.handle) forgetPending(root.handle);
     rememberSession();
+    syncTreeWatch();
     return true;
   }
 
@@ -1469,6 +1594,7 @@
     renderSide();
     toast("已从侧栏移除 " + node.name + (state.roots.length ? "，还剩 " + state.roots.length + " 个目录" : ""));
     rememberSession();
+    syncTreeWatch();
   }
 
   function closeFolders() {
@@ -1479,6 +1605,7 @@
     renderSide();
     toast("已从侧栏移除全部文件夹，已经打开的文档还在");
     rememberSession();
+    syncTreeWatch();
   }
 
   function isPathUnder(parent, child) {
@@ -4561,7 +4688,8 @@
       ND.desktop.ready()
         .then(hydrateDesktopSettings)
         .then(function () { return restoreNativeSession(); })
-        .catch(function () { return restoreNativeSession(); });
+        .catch(function () { return restoreNativeSession(); })
+        .then(function () { syncTreeWatch(); });
       ND.desktop.onWindowClose(function () {
         return Promise.resolve(writeNativeSession()).then(function () {
           var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
