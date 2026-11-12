@@ -33,6 +33,35 @@ var ND = ND || {};
     return -1;
   }
 
+  function gbkRev() {
+    if (ND._gbkRev) return ND._gbkRev;
+    var t = pairs();
+    var rev = Object.create(null);
+    for (var i = 0; i < t.n; i++) rev[t.gbs[i]] = t.cps[i];
+    ND._gbkRev = rev;
+    return rev;
+  }
+
+  function gbkDecode(bytes) {
+    var rev = gbkRev();
+    var out = "";
+    for (var i = 0; i < bytes.length; i++) {
+      var b = bytes[i];
+      if (b < 0x80) {
+        out += String.fromCharCode(b);
+        continue;
+      }
+      if (i + 1 >= bytes.length) {
+        out += "\ufffd";
+        break;
+      }
+      var g = (b << 8) | bytes[++i];
+      var cp = rev[g];
+      out += cp ? String.fromCharCode(cp) : "\ufffd";
+    }
+    return out;
+  }
+
   function gbkEncode(str) {
     var out = [];
     var missing = [];
@@ -102,7 +131,12 @@ var ND = ND || {};
       var text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       return { text: text, encoding: "utf-8", bom: false };
     } catch (e) {
-      return { text: new TextDecoder("gb18030").decode(bytes), encoding: "gbk", bom: false };
+      try {
+        return { text: new TextDecoder("gb18030").decode(bytes), encoding: "gbk", bom: false };
+      } catch (e2) {
+        /* Linux WebKit 常无 gb18030，改用内置码表 */
+        return { text: gbkDecode(bytes), encoding: "gbk", bom: false };
+      }
     }
   }
 
@@ -230,6 +264,7 @@ var ND = ND || {};
   }
 
   ND.codec = {
+    gbkDecode: gbkDecode,
     gbkEncode: gbkEncode,
     encodeText: encodeText,
     decodeBytes: decodeBytes,

@@ -288,7 +288,7 @@ ND.Zip = (function () {
       }
       if (bfinal) break;
     }
-    return out.slice(0, outLen);
+    return copyBytes(out, 0, outLen);
   }
 
   function skipGzipHeader(bytes) {
@@ -334,20 +334,23 @@ ND.Zip = (function () {
   }
 
   function inflateStream(bytes, format) {
-    if (typeof DecompressionStream !== "undefined") {
-      try {
-        var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
-        return new Response(stream).arrayBuffer().then(function (buf) {
-          return new Uint8Array(buf);
-        }, function () {
-          return inflateJs(bytes, format);
-        });
-      } catch (err) {
-        /* fall through to JS */
-      }
-    }
+    /* 优先纯 JS：Linux WebKitGTK 常无 DecompressionStream，且部分环境有残缺实现 */
     return Promise.resolve().then(function () {
-      return inflateJs(bytes, format);
+      try {
+        return inflateJs(bytes, format);
+      } catch (jsErr) {
+        if (typeof DecompressionStream === "undefined") throw jsErr;
+        try {
+          var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+          return new Response(stream).arrayBuffer().then(function (buf) {
+            return new Uint8Array(buf);
+          }, function () {
+            throw jsErr;
+          });
+        } catch (err) {
+          throw jsErr;
+        }
+      }
     });
   }
 
@@ -384,6 +387,81 @@ ND.Zip = (function () {
     return odd / n <= 0.08;
   }
 
+  function hasNul(bytes, limit) {
+    var n = Math.min(bytes.length, limit || 4096);
+    for (var i = 0; i < n; i++) if (bytes[i] === 0) return true;
+    return false;
+  }
+
+  function isUstar(bytes) {
+    return !!(bytes && bytes.length >= 262 &&
+      bytes[257] === 0x75 && bytes[258] === 0x73 && bytes[259] === 0x74 &&
+      bytes[260] === 0x61 && bytes[261] === 0x72);
+  }
+
+  function parseOctal(bytes, off, len) {
+    var s = "";
+    for (var i = 0; i < len; i++) {
+      var c = bytes[off + i];
+      if (!c || c === 0x20) break;
+      s += String.fromCharCode(c);
+    }
+    var n = parseInt(s, 8);
+    return isFinite(n) ? n : 0;
+  }
+
+  function copyBytes(bytes, start, end) {
+    var view = bytes.subarray(start, end);
+    var out = new Uint8Array(view.length);
+    out.set(view);
+    return out;
+  }
+
+  function extractFirstTarFile(bytes) {
+    var pos = 0;
+    var files = 0;
+    var first = null;
+    while (pos + 512 <= bytes.length) {
+      var empty = true;
+      for (var i = 0; i < 512; i++) {
+        if (bytes[pos + i]) { empty = false; break; }
+      }
+      if (empty) break;
+      var name = "";
+      for (var j = 0; j < 100 && bytes[pos + j]; j++) name += String.fromCharCode(bytes[pos + j]);
+      var size = parseOctal(bytes, pos + 124, 12);
+      var type = bytes[pos + 156];
+      var dataStart = pos + 512;
+      var dataEnd = dataStart + size;
+      var next = dataStart + Math.ceil(size / 512) * 512;
+      if (dataEnd > bytes.length) break;
+      if ((type === 0 || type === 0x30) && name && !/\/$/.test(name)) {
+        files++;
+        if (!first) {
+          first = {
+            name: name.replace(/^\.\//, ""),
+            bytes: copyBytes(bytes, dataStart, dataEnd)
+          };
+        }
+      }
+      pos = next;
+      if (files > 1) break;
+    }
+    if (!first) return null;
+    first.entryCount = files;
+    return first;
+  }
+
+  function wrapGzipText(archiveName, out, entryPath) {
+    return {
+      kind: "gzip",
+      name: baseName(entryPath || stripGzipName(archiveName)) || "unzipped.txt",
+      entryPath: entryPath || null,
+      bytes: out,
+      entryCount: 1
+    };
+  }
+
   function gunzip(bytes) {
     return inflateStream(bytes, "gzip");
   }
@@ -397,15 +475,24 @@ ND.Zip = (function () {
     var lower = archiveName.toLowerCase();
     if (isGzip(bytes) || (/\.gz$/i.test(lower) && !/\.tar\.gz$/i.test(lower) && !/\.tgz$/i.test(lower))) {
       return gunzip(bytes).then(function (out) {
-        if (!looksText(out)) {
+        if (isUstar(out)) {
+          var tar = extractFirstTarFile(out);
+          if (!tar) {
+            return { kind: "gzip", name: null, bytes: null, entryCount: 0, error: "gzip 内是空的 tar" };
+          }
+          if (tar.entryCount > 1) {
+            return { kind: "gzip", name: null, bytes: null, entryCount: tar.entryCount, error: "gzip 内含多个 tar 成员，请先解压" };
+          }
+          if (hasNul(tar.bytes, 4096) && !looksText(tar.bytes)) {
+            return { kind: "gzip", name: null, bytes: null, entryCount: 1, binary: true };
+          }
+          return wrapGzipText(archiveName, tar.bytes, tar.name);
+        }
+        /* .gz 解压成功后优先当文本打开；仅明显含 NUL 的才当二进制 */
+        if (hasNul(out, 4096) && !looksText(out)) {
           return { kind: "gzip", name: null, bytes: null, entryCount: 1, binary: true };
         }
-        return {
-          kind: "gzip",
-          name: baseName(stripGzipName(archiveName)),
-          bytes: out,
-          entryCount: 1
-        };
+        return wrapGzipText(archiveName, out, null);
       }, function (err) {
         return { kind: "gzip", name: null, bytes: null, entryCount: 1, error: (err && err.message) || "解压失败" };
       });

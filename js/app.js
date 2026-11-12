@@ -957,7 +957,12 @@
     doc.bytes = bytes;
     doc.totalSize = bytes.length;
     doc.truncated = null;
-    var dec = ND.codec.decodeBytes(bytes);
+    var dec;
+    try {
+      dec = ND.codec.decodeBytes(bytes);
+    } catch (err) {
+      throw new Error("解压后解码失败：" + (err && err.message ? err.message : err));
+    }
     var split = ND.codec.splitText(dec.text);
     doc.encoding = dec.encoding;
     doc.eol = split.eol;
@@ -1061,7 +1066,7 @@
           toast("解压失败：" + unwrapped.error);
         }
       } catch (err) {
-        /* 解压失败则按普通文件继续 */
+        toast("打开压缩内容失败：" + (err && err.message ? err.message : err));
       }
     } else if (maybeArchive && total > ARCHIVE_UNWRAP_MAX) {
       toast("压缩包超过 " + formatBytes(ARCHIVE_UNWRAP_MAX) + "，未自动解压预览");
