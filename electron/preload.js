@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("notepadDesktop", {
     NOTEPADWEB_REMOTE_BASE_PATH: process.env.NOTEPADWEB_REMOTE_BASE_PATH || process.env.NOTEPADWEB_BASE_PATH || "",
     NOTEPADWEB_BASE_PATH: process.env.NOTEPADWEB_BASE_PATH || process.env.NOTEPADWEB_REMOTE_BASE_PATH || "",
     NOTEPADWEB_DATA_DIR: process.env.NOTEPADWEB_DATA_DIR || "",
+    NOTEPADWEB_HOME: process.env.NOTEPADWEB_HOME || "",
+    NOTEPADWEB_CACHE_DIR: process.env.NOTEPADWEB_CACHE_DIR || "",
     NOTEPADWEB_INSTANCE: process.env.NOTEPADWEB_INSTANCE || ""
   },
   invoke: function (cmd, args) {

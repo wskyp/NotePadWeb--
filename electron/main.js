@@ -32,7 +32,11 @@ function safeInstanceName(name) {
 
 function applyUserDataDir() {
   // 必须在 ready 之前设置，localStorage / IndexedDB 才会进对应目录。
-  var custom = argValue(["--data-dir", "--user-data-dir"]) || process.env.NOTEPADWEB_DATA_DIR || "";
+  var homeRoot = String(process.env.NOTEPADWEB_HOME || "").trim();
+  var custom = argValue(["--data-dir", "--user-data-dir"]) ||
+    process.env.NOTEPADWEB_DATA_DIR ||
+    (homeRoot ? path.join(homeRoot, "data") : "") ||
+    "";
   var instance = safeInstanceName(argValue(["--instance"]) || process.env.NOTEPADWEB_INSTANCE || "");
   var base = app.getPath("userData");
   var target = "";

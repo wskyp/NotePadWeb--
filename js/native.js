@@ -104,9 +104,11 @@ ND.desktop = (function () {
   function buildDataProfile(envs) {
     envs = envs || {};
     var args = cliArgs();
+    var homeRoot = String(envs.NOTEPADWEB_HOME || "").trim().replace(/[\\/]+$/, "");
     var custom = String(
       argValue(["--data-dir", "--user-data-dir"], args) ||
       envs.NOTEPADWEB_DATA_DIR ||
+      (homeRoot ? joinPath(homeRoot, "data") : "") ||
       ""
     ).trim();
     var instance = safeInstanceName(

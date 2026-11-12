@@ -67,6 +67,28 @@ NOTEPADWEB_INSTANCE=A ./NotePadWeb
 
 开发时同样可用：`npm run electron -- --instance=A`、`npm run desktop -- --instance=A`。窗口标题会带上实例名，便于区分。未指定时仍共用默认仓（同一账号下最后写入的会话会互相覆盖）。
 
+**家目录所在磁盘满了**时，把缓存和解压目录、会话数据都挪到别的盘（推荐一条 `NOTEPADWEB_HOME`）：
+
+```bash
+# 推荐：一个根目录搞定
+# 解压缓存 → /data1/notepadweb/cache/<构建指纹>/
+# 会话/设置 → /data1/notepadweb/data/
+export NOTEPADWEB_HOME=/data1/notepadweb
+./NotePadWeb
+
+# 或分别指定
+export NOTEPADWEB_CACHE_DIR=/data1/notepadweb-cache
+export NOTEPADWEB_DATA_DIR=/data1/notepadweb-data
+./NotePadWeb
+
+# 当前已发布的单文件包也可用（不改程序）：
+export XDG_CACHE_HOME=/data1/cache          # 解压到 $XDG_CACHE_HOME/notepadweb/...
+export NOTEPADWEB_DATA_DIR=/data1/notepadweb-data
+./NotePadWeb
+```
+
+说明：Linux 单文件包默认解压到 `~/.cache/notepadweb/`；会话默认在 `~/.local/share/dev.notepadweb.desktop/`。设了上面的变量后不再写满的家目录盘（旧缓存可自行删掉 `~/.cache/notepadweb`）。
+
 ### 远程服务器地址（环境变量）
 
 默认写在 `js/remote-config.js`。打包或运行桌面程序时可用环境变量覆盖：
@@ -118,6 +140,7 @@ npm run build
 - 自动缩进、括号与引号补全、当前文档里的词语联想
 - 行号、书签、代码折叠、缩略图、空白字符、自动换行、缩放和全屏
 - 按扩展名高亮：JavaScript、TypeScript、Python、Java、C、C++、C#、Go、Rust、HTML、XML、CSS、JSON、SQL、Shell、YAML、Markdown、TCL、Verilog，以及常见配置文件
+- 打开 `.xlsx` / `.xlsm`：读取第一个工作表并转成 CSV 文本（可编辑、可另存为 CSV，不回写原 Excel）；不支持旧版 `.xls`
 - 侧栏里的文件夹树、已打开文档、函数 / 类列表；可以同时挂上多个文件夹
 - 查找和替换（区分大小写、全词、正则），以及在已打开文件夹里搜索
 - 跳转到行、匹配括号、行注释和块注释

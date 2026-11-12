@@ -1,3 +1,3 @@
 /* global ND */
 var ND = ND || {};
-ND.APP_VERSION = "1.7.3";
+ND.APP_VERSION = "1.8.0";

@@ -635,6 +635,11 @@
     if (d && d.fromArchive) {
       lines.push("当前显示的是压缩包「" + d.fromArchive.archive + "」内的「" + (d.fromArchive.entry || d.name) + "」。直接保存不会写回压缩包，请用另存为导出文本。");
     }
+    if (d && d.fromExcel) {
+      var excelTip = "当前显示的是 Excel「" + d.fromExcel.source + "」工作表「" + d.fromExcel.sheet + "」转成的 CSV。直接保存不会写回原 xlsx，请用另存为导出。";
+      if (d.fromExcel.truncated) excelTip += " 行数较多，已截到前 " + ((ND.Xlsx && ND.Xlsx.ROW_CAP) || 5000) + " 行。";
+      lines.push(excelTip);
+    }
     if (d && d.truncated && !d.following) lines.push(truncationText(d));
     if (d && d.noWrap && settings.wrap) lines.push("这个文件有 " + d.model.lines.length + " 行，自动换行已暂停，避免把每一行都拆开重排。");
     if (!lines.length) { el.classList.add("hidden"); el.textContent = ""; return; }
@@ -944,6 +949,47 @@
     return doc;
   }
 
+  async function openExcelAsCsv(file, extra, parsed) {
+    var sheet = parsed.sheet || "Sheet1";
+    var csvName = sheet + ".csv";
+    var text = parsed.text || "";
+    var bytes = new TextEncoder().encode(text);
+    var doc = createDoc(csvName);
+    doc.file = file;
+    doc.path = (extra.path || file.name) + " → " + sheet;
+    doc.absPath = null;
+    doc.handle = null;
+    doc.parent = extra.parent || null;
+    doc.fromExcel = {
+      source: file.name,
+      sheet: sheet,
+      sheetCount: parsed.sheetCount || 1,
+      sheets: parsed.sheets || [sheet],
+      truncated: !!parsed.truncated
+    };
+    doc.originalBytes = bytes;
+    doc.bytes = bytes;
+    doc.totalSize = bytes.length;
+    doc.truncated = null;
+    doc.encoding = "utf-8";
+    doc.eol = "\n";
+    doc.language = ND.Highlight.detect(csvName) || "csv";
+    if (bytes.length > TEXT_PLAIN_BYTES) doc.language = "plaintext";
+    var split = ND.codec.splitText(text);
+    doc.eol = split.eol || "\n";
+    doc.model.setText(split.lines.join("\n"));
+    doc.model.markClean();
+    doc.baseText = bytes.length > TEXT_PLAIN_BYTES ? null : doc.model.text();
+    if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
+    addDoc(doc);
+    var msg = "已打开工作表 " + sheet;
+    if (parsed.sheetCount > 1) msg += "（共 " + parsed.sheetCount + " 个工作表，默认第 1 个）";
+    if (parsed.truncated) msg += "；行数较多，已截到 " + (ND.Xlsx.ROW_CAP || 5000) + " 行";
+    toast(msg);
+    paintFileWarn();
+    return doc;
+  }
+
   async function openFileObject(file, extra) {
     extra = extra || {};
     var total = typeof file.size === "number" ? file.size : -1;
@@ -953,6 +999,25 @@
     if (total < 0) {
       bytes = new Uint8Array(await file.arrayBuffer());
       total = bytes.length;
+    }
+    if (ND.Xlsx && ND.Xlsx.isLegacyExcelName(file.name)) {
+      toast("不支持旧版 .xls，请在 Excel 里另存为 .xlsx 后再打开");
+      return null;
+    }
+    if (ND.Xlsx && ND.Xlsx.isExcelName(file.name)) {
+      if (total > ARCHIVE_UNWRAP_MAX) {
+        toast("Excel 文件超过 " + formatBytes(ARCHIVE_UNWRAP_MAX) + "，未打开");
+        return null;
+      }
+      if (!bytes) bytes = await readFileSlice(file, 0, total);
+      try {
+        var excel = await ND.Xlsx.parse(bytes);
+        if (excel && !excel.error) return openExcelAsCsv(file, extra, excel);
+        toast((excel && excel.error) || "无法解析 Excel 文件");
+      } catch (err) {
+        toast("无法解析 Excel 文件：" + (err.message || err));
+      }
+      return null;
     }
     var probe = bytes || await readFileSlice(file, 0, Math.min(total, 8192));
     var maybeArchive = archiveHintName(file.name) || (ND.Zip && (ND.Zip.isZip(probe) || ND.Zip.isGzip(probe)));

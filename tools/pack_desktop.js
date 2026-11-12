@@ -99,10 +99,20 @@ console.log("Linux 可执行文件 " + executable);
 
 fs.rmSync(path.join(outDir, ".build"), { recursive: true, force: true });
 
+function linuxDataEnvScript() {
+  return [
+    "# 家目录磁盘满时：NOTEPADWEB_HOME=/其它盘/notepadweb 或分别设 CACHE/DATA",
+    "if [ -z \"${NOTEPADWEB_DATA_DIR:-}\" ] && [ -n \"${NOTEPADWEB_HOME:-}\" ]; then",
+    "  export NOTEPADWEB_DATA_DIR=\"${NOTEPADWEB_HOME%/}/data\"",
+    "fi"
+  ];
+}
+
 function linuxLauncherScript() {
   return [
     "#!/bin/bash",
-    "cd \"$(dirname \"$0\")\"",
+    "cd \"$(dirname \"$0\")\""
+  ].concat(linuxDataEnvScript()).concat([
     "export LD_LIBRARY_PATH=\"$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"",
     "export WEBKIT_DISABLE_COMPOSITING_MODE=1",
     "export WEBKIT_DISABLE_DMABUF_RENDERER=1",
@@ -116,7 +126,7 @@ function linuxLauncherScript() {
     "chmod +x \"$PWD/NotePadWeb-linux_x64\" 2>/dev/null || true",
     "exec \"$PWD/NotePadWeb-linux_x64\" \"$@\"",
     ""
-  ].join("\n");
+  ]).join("\n");
 }
 
 function writeLinuxExecutable(linuxDir, dest) {
@@ -130,8 +140,15 @@ function writeLinuxExecutable(linuxDir, dest) {
   var script = [
     "#!/bin/bash",
     "set -euo pipefail",
-    "stamp=\"" + stamp + "\"",
-    "base=\"${XDG_CACHE_HOME:-$HOME/.cache}/notepadweb/$stamp\"",
+    "stamp=\"" + stamp + "\""
+  ].concat(linuxDataEnvScript()).concat([
+    "if [ -n \"${NOTEPADWEB_CACHE_DIR:-}\" ]; then",
+    "  base=\"${NOTEPADWEB_CACHE_DIR%/}/$stamp\"",
+    "elif [ -n \"${NOTEPADWEB_HOME:-}\" ]; then",
+    "  base=\"${NOTEPADWEB_HOME%/}/cache/$stamp\"",
+    "else",
+    "  base=\"${XDG_CACHE_HOME:-$HOME/.cache}/notepadweb/$stamp\"",
+    "fi",
     "if [ ! -x \"$base/NotePadWeb-linux_x64\" ]; then",
     "  mkdir -p \"$base\"",
     "  tail -c +" + offsetToken + " \"$0\" | tar -xzf - -C \"$base\"",
@@ -149,7 +166,7 @@ function writeLinuxExecutable(linuxDir, dest) {
     "fi",
     "exec \"$base/NotePadWeb-linux_x64\" \"$@\"",
     ""
-  ].join("\n");
+  ]).join("\n");
   var header = Buffer.from(script, "utf8");
   var offset = String(header.length + 1).padStart(10, "0");
   if (offset.length !== offsetToken.length) throw new Error("payload offset width");
