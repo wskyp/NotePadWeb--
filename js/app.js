@@ -24,6 +24,7 @@
     csvChart: null,
     csvQuery: null,
     csvCols: null,
+    csvColWidths: null,
     treeFocusNid: null
   };
   var settings = loadSettings();
@@ -2975,6 +2976,7 @@
       try { state.csvChart.dispose(); } catch (err) {}
       state.csvChart = null;
     }
+    state.csvColWidths = null;
     refreshMd();
     editor.schedule();
   }
@@ -3076,14 +3078,85 @@
     }).join("") || '<span class="csv-summary">无（可选）</span>';
   }
 
+  function captureCsvColWidths() {
+    var table = $("#csvTable");
+    if (!table) return null;
+    var ths = table.querySelectorAll("thead th");
+    if (!ths.length) return null;
+    var widths = [];
+    for (var i = 0; i < ths.length; i++) {
+      widths.push(Math.max(48, Math.round(ths[i].getBoundingClientRect().width)));
+    }
+    state.csvColWidths = widths;
+    return widths;
+  }
+
+  function applyCsvColWidths() {
+    var table = $("#csvTable");
+    var widths = state.csvColWidths;
+    if (!table || !widths || !widths.length) return;
+    var cols = table.querySelectorAll("colgroup col");
+    var total = 0;
+    for (var i = 0; i < cols.length; i++) {
+      var w = Math.max(48, widths[i] || 80);
+      cols[i].style.width = w + "px";
+      total += w;
+    }
+    table.style.tableLayout = "fixed";
+    table.style.width = total + "px";
+    table.classList.add("csv-cols-resized");
+  }
+
+  function bindCsvColResize(table) {
+    if (!table || table._csvColResizeBound) return;
+    table._csvColResizeBound = true;
+    table.addEventListener("mousedown", function (e) {
+      var handle = e.target.closest(".csv-col-resizer");
+      if (!handle) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var col = Number(handle.getAttribute("data-csv-col"));
+      if (!isFinite(col) || col < 0) return;
+      var headers = (state.csv && state.csv.headers) || [];
+      if (!state.csvColWidths || state.csvColWidths.length !== headers.length) {
+        captureCsvColWidths();
+        applyCsvColWidths();
+      }
+      if (!state.csvColWidths || col >= state.csvColWidths.length) return;
+      var startX = e.clientX;
+      var startW = state.csvColWidths[col];
+      document.body.classList.add("col-resizing");
+      function move(ev) {
+        state.csvColWidths[col] = Math.max(48, Math.round(startW + (ev.clientX - startX)));
+        applyCsvColWidths();
+      }
+      function up() {
+        document.body.classList.remove("col-resizing");
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+
   function renderCsvTable(parsed, filteredRows) {
     var table = $("#csvTable");
     if (!table || !parsed) return;
     var headers = parsed.headers || [];
     var rows = filteredRows || parsed.rows || [];
     var maxRows = Math.min(rows.length, 500);
-    var html = "<thead><tr>" + headers.map(function (h) {
-      return "<th>" + ND.esc(h) + "</th>";
+    if (state.csvColWidths && state.csvColWidths.length !== headers.length) {
+      state.csvColWidths = null;
+    }
+    var widths = state.csvColWidths;
+    var html = "<colgroup>" + headers.map(function (_, i) {
+      var w = widths && widths[i];
+      return w ? '<col style="width:' + w + 'px">' : "<col>";
+    }).join("") + "</colgroup>";
+    html += "<thead><tr>" + headers.map(function (h, i) {
+      return '<th><span class="csv-th-text">' + ND.esc(h) +
+        '</span><span class="csv-col-resizer" data-csv-col="' + i + '" title="拖动调整列宽"></span></th>';
     }).join("") + "</tr></thead><tbody>";
     for (var i = 0; i < maxRows; i++) {
       html += "<tr>";
@@ -3094,6 +3167,11 @@
     }
     html += "</tbody>";
     table.innerHTML = html;
+    table.style.tableLayout = "";
+    table.style.width = "";
+    table.classList.remove("csv-cols-resized");
+    if (widths && widths.length) applyCsvColWidths();
+    bindCsvColResize(table);
   }
 
   function csvAccent() {
@@ -3326,6 +3404,7 @@
       state.csv = parsed;
       state.csvCols = ND.Csv.inferColumns(parsed);
       state.csvQuery = defaultCsvQuery(parsed, state.csvCols);
+      state.csvColWidths = null;
       renderCsvQuery();
       if (parsed.truncated) toast("行数较多，表格最多显示 " + ND.Csv.ROW_CAP + " 行");
     } else {
@@ -3407,6 +3486,7 @@
     pane.classList.remove("hidden");
     state.csv = null;
     state.csvQuery = null;
+    state.csvColWidths = null;
     applyCsvChartVisibility();
     refreshMd();
     applySplitWidths();

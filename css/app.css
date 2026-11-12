@@ -503,12 +503,29 @@ body[data-theme="dark"] .ed-suggest .sug-note, body[data-theme="monokai"] .ed-su
   border-collapse: collapse; width: max-content; min-width: 100%;
   font: 12px/1.35 Consolas, "Cascadia Mono", "Microsoft YaHei Mono", monospace;
 }
+#csvTable.csv-cols-resized { min-width: 0; }
 #csvTable th, #csvTable td {
   border: 1px solid var(--line); padding: 3px 8px; white-space: nowrap; text-align: left;
+}
+#csvTable.csv-cols-resized th,
+#csvTable.csv-cols-resized td {
+  overflow: hidden; text-overflow: ellipsis;
 }
 #csvTable th {
   position: sticky; top: 0; z-index: 1;
   background: var(--ed-gutter); color: var(--ed-gutter-fg); font-weight: 650;
+}
+#csvTable .csv-th-text {
+  display: block; overflow: hidden; text-overflow: ellipsis;
+  padding-right: 4px;
+}
+#csvTable .csv-col-resizer {
+  position: absolute; top: 0; right: -2px; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 3; user-select: none;
+}
+#csvTable .csv-col-resizer:hover,
+body.col-resizing #csvTable .csv-col-resizer:hover {
+  background: var(--accent); opacity: 0.45;
 }
 #csvTable tr:nth-child(even) td { background: rgba(0, 0, 0, .02); }
 body[data-theme="dark"] #csvTable tr:nth-child(even) td,
