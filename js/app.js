@@ -1057,6 +1057,8 @@
           toast("压缩包内有 " + unwrapped.entryCount + " 个文件，请先解压再打开");
         } else if (unwrapped && unwrapped.binary) {
           toast("压缩包内是单个二进制文件，已用十六进制打开压缩包本身");
+        } else if (unwrapped && unwrapped.error) {
+          toast("解压失败：" + unwrapped.error);
         }
       } catch (err) {
         /* 解压失败则按普通文件继续 */
