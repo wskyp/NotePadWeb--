@@ -548,7 +548,8 @@
   var TREE_DRAW_CAP = 800;
   var TEXT_PLAIN_BYTES = 1500000;
   var TEXT_CUT_BYTES = 2000000;
-  var TEXT_HEAD_BYTES = 10 * 1024 * 1024;
+  var TEXT_SIDE_BYTES = 5 * 1024 * 1024;
+  var TEXT_VIEW_BYTES = TEXT_SIDE_BYTES * 2;
   var FOLLOW_TAIL_BYTES = 1024 * 1024;
   var FOLLOW_POLL_MS = 250;
   var FOLLOW_CHUNK_MAX = 48 * 1024;
@@ -624,10 +625,107 @@
     }
   }
 
+  function snapTailBytes(bytes) {
+    if (!bytes || !bytes.length) return bytes || new Uint8Array(0);
+    var start = 0;
+    var lim = Math.min(bytes.length, 8192);
+    for (var i = 0; i < lim; i++) {
+      if (bytes[i] === 10) { start = i + 1; break; }
+    }
+    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+    return bytes.subarray(start);
+  }
+
+  function concatBytes(a, b) {
+    var out = new Uint8Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
+  }
+
+  function truncationMarker(omitted, total, side) {
+    return [
+      "",
+      "================================================================================",
+      "【截断】中间约 " + formatBytes(omitted) + " 未载入（文件共 " + formatBytes(total) +
+        "；仅显示开头与结尾各约 " + formatBytes(side) + "）",
+      "================================================================================",
+      ""
+    ].join("\n");
+  }
+
+  function decodePartWith(bytes, encoding) {
+    if (!bytes || !bytes.length) return "";
+    if (encoding === "gbk" || encoding === "gb18030") {
+      try {
+        return new TextDecoder("gb18030").decode(bytes);
+      } catch (err) {
+        return ND.codec.gbkDecode ? ND.codec.gbkDecode(bytes) : new TextDecoder("utf-8").decode(bytes);
+      }
+    }
+    if (encoding === "utf-16le") return new TextDecoder("utf-16le").decode(bytes);
+    if (encoding === "utf-8-bom" && bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      return new TextDecoder("utf-8").decode(bytes.subarray(3));
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
+  function buildHeadTailText(headBytes, tailBytes, omitted, total, encoding) {
+    var headDec = encoding ? null : ND.codec.decodeBytes(headBytes);
+    var enc = encoding || (headDec && headDec.encoding) || "utf-8";
+    var headText = (headDec && !encoding ? headDec.text : decodePartWith(headBytes, enc))
+      .replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    var tailText = decodePartWith(tailBytes, enc).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (headText.length && headText.charAt(headText.length - 1) !== "\n") headText += "\n";
+    var text = headText + truncationMarker(omitted, total, TEXT_SIDE_BYTES);
+    if (tailText.charAt(0) === "\n") text += tailText.slice(1);
+    else text += tailText;
+    return { text: text, encoding: enc };
+  }
+
+  async function readTextHeadTail(file, total) {
+    if (total <= TEXT_VIEW_BYTES) {
+      var all = await readFileSlice(file, 0, total);
+      return { full: true, bytes: all };
+    }
+    var headRaw = await readFileSlice(file, 0, TEXT_SIDE_BYTES);
+    var head = snapHeadBytes(headRaw, total);
+    var tailRaw = await readFileSlice(file, total - TEXT_SIDE_BYTES, total);
+    var tail = snapTailBytes(tailRaw);
+    var tailSkip = tailRaw.length - tail.length;
+    var tailFileStart = (total - TEXT_SIDE_BYTES) + tailSkip;
+    if (head.length >= tailFileStart) {
+      var overlapped = await readFileSlice(file, 0, total);
+      return { full: true, bytes: overlapped };
+    }
+    var omitted = tailFileStart - head.length;
+    var built = buildHeadTailText(head, tail, omitted, total);
+    return {
+      full: false,
+      bytes: concatBytes(head, tail),
+      head: head,
+      tail: tail,
+      omitted: omitted,
+      text: built.text,
+      encoding: built.encoding,
+      shown: head.length + tail.length
+    };
+  }
+
   function truncationText(d) {
     var t = d.truncated;
-    var how = t.kind === "hex" ? "十六进制视图只显示开头 " : "文本只显示开头 ";
-    return "大文件提醒：" + d.name + " 共 " + formatBytes(t.total) + "。当前" + how + formatBytes(t.shown) + "，后面的内容没有载入。屏幕上看到的不是全文。直接保存已禁止，以免用这段开头覆盖原文件里尚未载入的部分。";
+    if (t.kind === "hex") {
+      return "大文件提醒：" + d.name + " 共 " + formatBytes(t.total) + "。十六进制视图只显示开头 " +
+        formatBytes(t.shown) + "，后面没有载入。直接保存已禁止。";
+    }
+    if (t.mode === "ends") {
+      return "大文件提醒：" + d.name + " 共 " + formatBytes(t.total) + "。当前只显示开头与结尾各约 " +
+        formatBytes(TEXT_SIDE_BYTES) + "（合计约 " + formatBytes(t.shown) + "），中间约 " +
+        formatBytes(t.omitted || Math.max(0, t.total - t.shown)) +
+        " 未载入。编辑区中间的【截断】分隔行即省略位置。直接保存已禁止，以免覆盖未载入部分。";
+    }
+    return "大文件提醒：" + d.name + " 共 " + formatBytes(t.total) + "。文本只显示开头 " +
+      formatBytes(t.shown) + "，后面的内容没有载入。直接保存已禁止，以免用这段开头覆盖原文件里尚未载入的部分。";
   }
 
   function paintFileWarn() {
@@ -1073,14 +1171,24 @@
       toast("压缩包超过 " + formatBytes(ARCHIVE_UNWRAP_MAX) + "，未自动解压预览");
     }
     var binary = looksBinary(probe);
+    var headTail = null;
     if (!bytes && binary && total > TEXT_CUT_BYTES) {
       var hexN = Math.min(total, HEX_WINDOW_BYTES);
       bytes = await readFileSlice(file, 0, hexN);
       forceHex = true;
       if (bytes.length < total) truncated = { total: total, shown: bytes.length, mode: "head", kind: "hex" };
     } else if (!bytes && total > TEXT_CUT_BYTES) {
-      bytes = snapHeadBytes(await readFileSlice(file, 0, Math.min(total, TEXT_HEAD_BYTES)), total);
-      if (bytes.length < total) truncated = { total: total, shown: bytes.length, mode: "head", kind: "text" };
+      headTail = await readTextHeadTail(file, total);
+      bytes = headTail.bytes;
+      if (!headTail.full) {
+        truncated = {
+          total: total,
+          shown: headTail.shown,
+          omitted: headTail.omitted,
+          mode: "ends",
+          kind: "text"
+        };
+      }
     } else if (!bytes) {
       bytes = await readFileSlice(file, 0, total);
       if (!binary && bytes.length > probe.length) binary = looksBinary(bytes);
@@ -1095,19 +1203,31 @@
     doc.bytes = bytes;
     doc.totalSize = total;
     doc.truncated = truncated;
+    if (headTail && !headTail.full) {
+      doc.truncParts = { head: headTail.head, tail: headTail.tail, omitted: headTail.omitted };
+    }
     if (forceHex || binary) {
       doc.hex = true;
       doc.binary = binary;
       doc.language = "plaintext";
     }
     if (!doc.hex) {
-      var dec = ND.codec.decodeBytes(bytes);
-      var split = ND.codec.splitText(dec.text);
-      doc.encoding = dec.encoding;
-      doc.eol = split.eol;
-      doc.language = ND.Highlight.detect(file.name);
-      if (truncated || bytes.length > TEXT_PLAIN_BYTES) doc.language = "plaintext";
-      doc.model.setText(split.lines.join("\n"));
+      var split;
+      if (headTail && !headTail.full && headTail.text != null) {
+        split = ND.codec.splitText(headTail.text);
+        doc.encoding = headTail.encoding || "utf-8";
+        doc.eol = split.eol || "\n";
+        doc.language = "plaintext";
+        doc.model.setText(split.lines.join("\n"));
+      } else {
+        var dec = ND.codec.decodeBytes(bytes);
+        split = ND.codec.splitText(dec.text);
+        doc.encoding = dec.encoding;
+        doc.eol = split.eol;
+        doc.language = ND.Highlight.detect(file.name);
+        if (truncated || bytes.length > TEXT_PLAIN_BYTES) doc.language = "plaintext";
+        doc.model.setText(split.lines.join("\n"));
+      }
       doc.model.markClean();
       doc.baseText = truncated || bytes.length > TEXT_PLAIN_BYTES ? null : doc.model.text();
       if (doc.model.lines.length > WRAP_LINE_CAP) doc.noWrap = true;
@@ -1118,6 +1238,9 @@
     }
     addDoc(doc);
     if (doc.binary && !truncated) toast("检测为二进制，已用十六进制打开");
+    else if (truncated && truncated.mode === "ends") {
+      toast("文件较大，已显示开头与结尾各约 " + formatBytes(TEXT_SIDE_BYTES) + "，中间已省略");
+    }
     paintFileWarn();
     if (doc.handle) forgetPending(doc.handle);
   }
@@ -1174,12 +1297,17 @@
       return false;
     }
     if (doc.truncated && !saveAs) {
-      toast("当前只载入了文件开头，直接保存会覆盖尚未载入的内容，已取消。");
+      toast(doc.truncated.mode === "ends"
+        ? "当前只载入了文件头尾片段，直接保存会覆盖尚未载入的中间内容，已取消。"
+        : "当前只载入了文件开头，直接保存会覆盖尚未载入的内容，已取消。");
       paintFileWarn();
       return false;
     }
     if (doc.truncated && saveAs) {
-      var allow = await ask("只保存已载入的开头", "编辑器里不是完整文件。另存为只会写出已显示的开头 " + formatBytes(doc.truncated.shown) + "，原文件共 " + formatBytes(doc.truncated.total) + "。", [["cancel", "取消"], ["ok", "仍要另存为", true]]);
+      var partialDesc = doc.truncated.mode === "ends"
+        ? ("已显示的头尾合计 " + formatBytes(doc.truncated.shown) + "（含中间的截断说明）")
+        : ("已显示的开头 " + formatBytes(doc.truncated.shown));
+      var allow = await ask("只保存已载入部分", "编辑器里不是完整文件。另存为只会写出" + partialDesc + "，原文件共 " + formatBytes(doc.truncated.total) + "。", [["cancel", "取消"], ["ok", "仍要另存为", true]]);
       if (allow !== "ok") return false;
     }
     if (doc === state.active) stash(doc);
@@ -1204,7 +1332,7 @@
         var partialNative = !!doc.truncated;
         if (saveAs && partialNative) releaseTruncation(doc);
         finishSave(doc, bytes);
-        toast(partialNative ? "已另存为已载入的开头。新文件只包含这部分，不是原来的完整文件。" : "已保存 " + doc.name);
+        toast(partialNative ? "已另存为已载入片段。新文件只包含这部分，不是原来的完整文件。" : "已保存 " + doc.name);
         renderTabs();
         paintFileWarn();
         return true;
@@ -1242,7 +1370,7 @@
         var partialPick = !!doc.truncated;
         if (saveAs && partialPick) releaseTruncation(doc);
         finishSave(doc, bytes);
-        toast(partialPick ? "已另存为已载入的开头。新文件只包含这部分，不是原来的完整文件。" : "已保存 " + doc.name);
+        toast(partialPick ? "已另存为已载入片段。新文件只包含这部分，不是原来的完整文件。" : "已保存 " + doc.name);
         renderTabs();
         paintFileWarn();
         return true;
@@ -1261,7 +1389,7 @@
     if (saveAs && partialDownload) releaseTruncation(doc);
     finishSave(doc, bytes);
     paintFileWarn();
-    toast(partialDownload ? "已下载已载入的开头。这份文件不是原来的完整文件。" : "浏览器不能写回原路径，已下载 " + doc.name);
+    toast(partialDownload ? "已下载已载入片段。这份文件不是原来的完整文件。" : "浏览器不能写回原路径，已下载 " + doc.name);
     return true;
   }
 
@@ -2205,7 +2333,11 @@
     if (!d) { $("#status").innerHTML = ""; paintFileWarn(); return; }
     var m = d.model;
     var lenLabel;
-    if (d.truncated) lenLabel = "已显示开头 " + formatBytes(d.truncated.shown) + " / 共 " + formatBytes(d.truncated.total);
+    if (d.truncated) {
+      lenLabel = d.truncated.mode === "ends"
+        ? ("头尾 " + formatBytes(d.truncated.shown) + " / 共 " + formatBytes(d.truncated.total))
+        : ("已显示开头 " + formatBytes(d.truncated.shown) + " / 共 " + formatBytes(d.truncated.total));
+    }
     else if (m.lines.length > WRAP_LINE_CAP) lenLabel = m.lines.length + " 行";
     else lenLabel = String(m.text().length);
     var line = m.cursor.line + 1;
@@ -2806,7 +2938,7 @@
   function compareDisk() {
     var d = active();
     if (!d || d.baseText == null) {
-      if (d && d.truncated) toast("这份文件只载入了开头，没有全文可以和打开时比较。");
+      if (d && d.truncated) toast("这份文件只载入了片段，没有全文可以和打开时比较。");
       else toast("没有打开时的快照");
       return;
     }
@@ -3943,18 +4075,32 @@
     var d = active();
     if (!d || !d.originalBytes) { toast("没有原始字节可以重新解码"); return; }
     if (d.model.dirty()) { toast("请先保存或放弃当前修改后再重新打开"); return; }
-    var bytes = d.originalBytes;
     var text = "";
-    if (encoding === "gbk" || encoding === "gb18030") text = new TextDecoder("gb18030").decode(stripBom(bytes, encoding));
-    else if (encoding === "utf-16le") text = new TextDecoder("utf-16le").decode(stripBom(bytes, encoding));
-    else text = new TextDecoder("utf-8").decode(stripBom(bytes, encoding));
+    if (d.truncated && d.truncated.mode === "ends" && d.truncParts && d.truncParts.head && d.truncParts.tail) {
+      text = buildHeadTailText(
+        d.truncParts.head,
+        d.truncParts.tail,
+        d.truncParts.omitted || d.truncated.omitted || 0,
+        d.truncated.total,
+        encoding
+      ).text;
+    } else {
+      var bytes = d.originalBytes;
+      if (encoding === "gbk" || encoding === "gb18030") text = decodePartWith(stripBom(bytes, encoding), "gbk");
+      else if (encoding === "utf-16le") text = new TextDecoder("utf-16le").decode(stripBom(bytes, encoding));
+      else text = new TextDecoder("utf-8").decode(stripBom(bytes, encoding));
+    }
     var split = ND.codec.splitText(text);
     d.model.setText(split.lines.join("\n"));
     d.model.markClean();
     d.encoding = encoding;
     d.eol = split.eol;
     d.baseText = d.truncated ? null : d.model.text();
-    toast(d.truncated ? "已按 " + encoding + " 重新解码已载入的开头，不是整个文件。" : "已按 " + encoding + " 重新解码");
+    toast(d.truncated
+      ? (d.truncated.mode === "ends"
+        ? "已按 " + encoding + " 重新解码已载入的头尾片段，不是整个文件。"
+        : "已按 " + encoding + " 重新解码已载入的开头，不是整个文件。")
+      : "已按 " + encoding + " 重新解码");
     paintStatus();
   }
 
