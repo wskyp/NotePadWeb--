@@ -387,6 +387,7 @@
     renderTabs();
     renderSide();
     paintStatus();
+    paintReloadBanner();
     updateHint();
     $("#crumb").textContent = doc.path || doc.name;
     document.title = (doc.model.dirty() || doc.hexDirty ? "*" : "") + doc.name + " - NotePadWeb--";
@@ -406,7 +407,8 @@
     var host = $("#tabs");
     host.innerHTML = state.docs.map(function (d) {
       var dirty = d.model.dirty() || d.hexDirty;
-      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + '" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + '"><span class="star">' + (dirty ? "●" : "") + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '" title="关闭">×</button></div>';
+      var ext = !!d.externalChange;
+      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + (ext ? " ext-changed" : "") + '" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + (ext ? "（磁盘上已变化）" : "") + '"><span class="star">' + (dirty ? "●" : (ext ? "!" : "")) + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '" title="关闭">×</button></div>';
     }).join("");
     requestAnimationFrame(function () {
       ensureActiveTabVisible();
@@ -454,12 +456,14 @@
     var d = active();
     if (!d) return;
     var dirty = d.model.dirty() || d.hexDirty || editor.hexDirty;
+    var ext = !!d.externalChange;
     document.title = (dirty ? "*" : "") + d.name + " - NotePadWeb--";
     var tab = $('.tab[data-id="' + d.id + '"]');
     if (!tab) return;
     tab.classList.toggle("dirty", dirty);
+    tab.classList.toggle("ext-changed", ext);
     var star = tab.querySelector(".star");
-    if (star) star.textContent = dirty ? "●" : "";
+    if (star) star.textContent = dirty ? "●" : (ext ? "!" : "");
   }
 
   function updateHint() {
@@ -496,6 +500,7 @@
         if (!ok) return false;
       }
     }
+    hideReloadBanner(doc);
     var idx = state.docs.indexOf(doc);
     if (idx >= 0) state.docs.splice(idx, 1);
     if (!state.docs.length) addDoc(createDoc("未命名-1"));
@@ -559,6 +564,9 @@
   var TREE_WATCH_MS = 2000;
   var treeWatchTimer = 0;
   var treeWatchBusy = false;
+  var FILE_WATCH_MS = 2000;
+  var fileWatchTimer = 0;
+  var fileWatchBusy = false;
   var ARCHIVE_UNWRAP_MAX = 32 * 1024 * 1024;
   var HEX_WINDOW_BYTES = 1024 * 1024;
   var WRAP_LINE_CAP = 20000;
@@ -1237,6 +1245,11 @@
       doc.model.readOnly = true;
     }
     addDoc(doc);
+    if (typeof file.lastModified === "number") {
+      stampDocDisk(doc, { size: typeof file.size === "number" ? file.size : total, mtime: file.lastModified });
+    } else {
+      stampDocDisk(doc);
+    }
     if (doc.binary && !truncated) toast("检测为二进制，已用十六进制打开");
     else if (truncated && truncated.mode === "ends") {
       toast("文件较大，已显示开头与结尾各约 " + formatBytes(TEXT_SIDE_BYTES) + "，中间已省略");
@@ -1406,10 +1419,181 @@
     doc.originalBytes = bytes;
     doc.baseText = doc.hex ? doc.baseText : doc.model.text();
     if (doc === state.active) editor.hexDirty = false;
+    doc._ignoreWatchUntil = Date.now() + 2000;
+    stampDocDisk(doc);
     touchTreeMtime(doc);
     paintDirty();
     paintStatus();
     rememberSession();
+  }
+
+  function canWatchDoc(doc) {
+    if (!doc) return false;
+    if (doc.following || doc._reloading) return false;
+    if (doc.fromArchive || doc.fromExcel) return false;
+    if (doc.absPath && ND.desktop.inDesktop()) return true;
+    if (doc.handle) return true;
+    return false;
+  }
+
+  function stampDocDisk(doc, hint) {
+    if (!doc) return Promise.resolve();
+    if (hint && typeof hint.size === "number") {
+      doc.diskStamp = { size: hint.size || 0, mtime: hint.mtime || hint.lastModified || 0 };
+      doc.externalChange = null;
+      return Promise.resolve(doc.diskStamp);
+    }
+    if (!canWatchDoc(doc) && !(doc.absPath || doc.handle)) {
+      doc.diskStamp = null;
+      doc.externalChange = null;
+      return Promise.resolve(null);
+    }
+    return followMeta(doc).then(function (meta) {
+      doc.diskStamp = { size: meta.size || 0, mtime: meta.mtime || 0 };
+      doc.externalChange = null;
+      return doc.diskStamp;
+    }, function () {
+      return null;
+    });
+  }
+
+  function showReloadBanner(doc) {
+    var banner = $("#banner");
+    if (!banner || !doc) return;
+    if (banner.dataset.kind === "local" || banner.dataset.kind === "restore") {
+      toast("「" + doc.name + "」已在外部被修改，可在提示条可用时重新加载");
+      return;
+    }
+    banner.dataset.kind = "reload";
+    banner.dataset.docId = String(doc.id);
+    banner.innerHTML = "文件「" + ND.esc(doc.name) + "」已在外部被修改。" +
+      (doc.model.dirty() || doc.hexDirty ? "重新加载会丢掉当前未保存的修改。" : "") +
+      '<button type="button" data-banner="reload">重新加载</button>' +
+      '<button type="button" data-banner="reload-ignore">忽略</button>';
+    banner.classList.remove("hidden");
+  }
+
+  function hideReloadBanner(doc) {
+    var banner = $("#banner");
+    if (!banner || banner.dataset.kind !== "reload") return;
+    if (doc && banner.dataset.docId && Number(banner.dataset.docId) !== doc.id) return;
+    banner.classList.add("hidden");
+    banner.dataset.kind = "";
+    banner.dataset.docId = "";
+    banner.textContent = "";
+  }
+
+  function paintReloadBanner() {
+    var d = active();
+    if (d && d.externalChange) showReloadBanner(d);
+    else hideReloadBanner();
+  }
+
+  async function ignoreExternalChange(doc) {
+    doc = doc || active();
+    if (!doc) return;
+    if (doc.externalChange) {
+      doc.diskStamp = {
+        size: doc.externalChange.size || 0,
+        mtime: doc.externalChange.mtime || 0
+      };
+    } else {
+      await stampDocDisk(doc);
+    }
+    doc.externalChange = null;
+    hideReloadBanner(doc);
+    paintDirty();
+    paintStatus();
+  }
+
+  async function reloadDoc(doc) {
+    doc = doc || active();
+    if (!doc || !canWatchDoc(doc)) {
+      toast("当前标签没有可监视的磁盘文件");
+      return false;
+    }
+    if (doc.following) {
+      toast("请先停止跟踪日志，再重新加载");
+      return false;
+    }
+    if (doc.model.dirty() || doc.hexDirty) {
+      var ans = await ask(doc.name, "磁盘上的文件已变化。重新加载会丢掉当前未保存的修改。", [
+        ["cancel", "取消"],
+        ["ok", "重新加载", true]
+      ]);
+      if (ans !== "ok") return false;
+    }
+    doc._reloading = true;
+    hideReloadBanner(doc);
+    try {
+      var absPath = doc.absPath;
+      var handle = doc.handle;
+      var parent = doc.parent;
+      var path = doc.path;
+      doc.model.markClean();
+      doc.hexDirty = false;
+      doc.externalChange = null;
+      if (doc.following) stopFollow(doc, true);
+      var idx = state.docs.indexOf(doc);
+      if (idx >= 0) state.docs.splice(idx, 1);
+      if (state.active === doc) {
+        state.active = null;
+        if (state.docs.length) activate(state.docs[Math.max(0, idx - 1)] || state.docs[0]);
+      } else {
+        renderTabs();
+      }
+      var opened = null;
+      if (absPath && ND.desktop.inDesktop()) opened = await openAbsPath(absPath);
+      else if (handle) opened = await openHandle(handle, parent, path);
+      if (!opened && !state.docs.length) addDoc(createDoc("未命名-1"));
+      toast("已重新加载 " + (opened && opened.name ? opened.name : (path || "文件")));
+      return !!opened;
+    } catch (err) {
+      toast("重新加载失败：" + (err && err.message ? err.message : err));
+      return false;
+    } finally {
+      doc._reloading = false;
+    }
+  }
+
+  async function checkDocExternal(doc) {
+    if (!canWatchDoc(doc) || doc.externalChange) return;
+    if (doc._ignoreWatchUntil && Date.now() < doc._ignoreWatchUntil) return;
+    try {
+      var meta = await followMeta(doc);
+      var next = { size: meta.size || 0, mtime: meta.mtime || 0 };
+      if (!doc.diskStamp) {
+        doc.diskStamp = next;
+        return;
+      }
+      if (next.size !== doc.diskStamp.size || next.mtime !== doc.diskStamp.mtime) {
+        doc.externalChange = next;
+        if (doc === active()) showReloadBanner(doc);
+        paintDirty();
+        paintStatus();
+      }
+    } catch (err) {
+      /* 临时读失败忽略 */
+    }
+  }
+
+  async function tickFileWatch() {
+    if (fileWatchBusy) return;
+    fileWatchBusy = true;
+    try {
+      for (var i = 0; i < state.docs.length; i++) {
+        await checkDocExternal(state.docs[i]);
+      }
+    } finally {
+      fileWatchBusy = false;
+    }
+  }
+
+  function syncFileWatch() {
+    if (fileWatchTimer) return;
+    fileWatchTimer = setInterval(function () {
+      tickFileWatch();
+    }, FILE_WATCH_MS);
   }
 
   function touchTreeMtime(doc) {
@@ -2157,6 +2341,7 @@
         return null;
       }
       var file = ND.desktop.lazyFile(absPath, meta.size, meta.name);
+      file.lastModified = meta.mtime || 0;
       await openFileObject(file, { path: absPath, absPath: absPath });
       return state.active;
     } catch (err) {
@@ -2355,6 +2540,7 @@
     var macro = ND.macro.rec ? "录制中 " + ND.macro.ops.length : "";
     var cut = d.following ? "" : (d.truncated ? " 已截断" : "");
     var follow = d.following ? " 跟踪中" : "";
+    var extTip = d.externalChange ? " 磁盘已变" : "";
     if (d.following) {
       lenLabel = "末尾 " + d.model.lines.length + " 行 / 文件 " + formatBytes(d.totalSize || (d.truncated && d.truncated.total) || 0);
     }
@@ -2363,7 +2549,7 @@
       '<span class="st">行: ' + line + "</span>" +
       '<span class="st">列: ' + col + "</span>" +
       '<span class="st">选中: ' + sel + "</span>" +
-      '<span class="st grow">' + macro + cut + follow + (d.readOnly ? " 只读" : "") + "</span>" +
+      '<span class="st grow">' + macro + cut + follow + extTip + (d.readOnly ? " 只读" : "") + "</span>" +
       '<button type="button" class="st btn" data-act="eolMenu">' + eol + "</button>" +
       '<button type="button" class="st btn" data-act="encMenu">' + enc + "</button>" +
       '<button type="button" class="st btn" data-act="langMenu">' + lang + "</button>" +
@@ -4391,8 +4577,16 @@
     $("#banner").addEventListener("click", function (e) {
       var btn = e.target.closest("[data-banner]");
       if (btn) {
-        if (btn.getAttribute("data-banner") === "restore") confirmRestore();
-        else forgetRestore();
+        var kind = btn.getAttribute("data-banner");
+        if (kind === "restore") confirmRestore();
+        else if (kind === "reload") {
+          var reloadId = Number($("#banner").dataset.docId);
+          var reloadDocRef = docById(reloadId) || active();
+          reloadDoc(reloadDocRef);
+        } else if (kind === "reload-ignore") {
+          var ignoreId = Number($("#banner").dataset.docId);
+          ignoreExternalChange(docById(ignoreId) || active());
+        } else forgetRestore();
         return;
       }
       if ($("#banner").dataset.kind === "local") $("#banner").classList.add("hidden");
@@ -4922,7 +5116,7 @@
         .then(hydrateDesktopSettings)
         .then(function () { return restoreNativeSession(); })
         .catch(function () { return restoreNativeSession(); })
-        .then(function () { syncTreeWatch(); });
+        .then(function () { syncTreeWatch(); syncFileWatch(); });
       ND.desktop.onWindowClose(function () {
         return Promise.resolve(writeNativeSession()).then(function () {
           var dirty = state.docs.some(function (d) { return (d.model && d.model.dirty()) || d.hexDirty; });
@@ -4938,7 +5132,10 @@
           });
         });
       });
-    } else restoreSession();
+    } else {
+      restoreSession();
+      syncFileWatch();
+    }
   }
 
   boot();

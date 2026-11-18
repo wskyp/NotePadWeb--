@@ -244,6 +244,9 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .tab .x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
 .tab .x:hover { background: var(--hover); color: var(--text); }
 .tab.dirty .star { color: var(--danger); }
+.tab.ext-changed .star { color: #c47b00; font-weight: 700; }
+body[data-theme="dark"] .tab.ext-changed .star,
+body[data-theme="monokai"] .tab.ext-changed .star { color: #f3c56a; }
 
 #fileWarn {
   flex: none; padding: 6px 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap;
