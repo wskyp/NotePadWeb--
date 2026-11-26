@@ -235,18 +235,22 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
   display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px;
   flex: 0 0 auto; max-width: 100%; box-sizing: border-box;
   background: var(--bg-2); border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; color: var(--muted);
+  cursor: grab;
 }
 .tab.on {
   background: var(--ed-bg); color: var(--text); border-color: var(--line); height: 25px;
 }
-.tab .star { flex: none; width: 8px; text-align: center; font-size: 10px; }
-.tab .name { white-space: nowrap; flex: none; }
-.tab .x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; }
+.tab .star { flex: none; width: 8px; text-align: center; font-size: 10px; pointer-events: none; }
+.tab .name { white-space: nowrap; flex: none; pointer-events: none; }
+.tab .x { width: 16px; height: 16px; border-radius: 2px; color: var(--muted); flex: none; cursor: pointer; }
 .tab .x:hover { background: var(--hover); color: var(--text); }
 .tab.dirty .star { color: var(--danger); }
 .tab.ext-changed .star { color: #c47b00; font-weight: 700; }
 body[data-theme="dark"] .tab.ext-changed .star,
 body[data-theme="monokai"] .tab.ext-changed .star { color: #f3c56a; }
+.tab.dragging { opacity: .45; cursor: grabbing; }
+.tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 
 #fileWarn {
   flex: none; padding: 6px 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap;

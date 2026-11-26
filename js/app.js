@@ -408,12 +408,52 @@
     host.innerHTML = state.docs.map(function (d) {
       var dirty = d.model.dirty() || d.hexDirty;
       var ext = !!d.externalChange;
-      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + (ext ? " ext-changed" : "") + '" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + (ext ? "（磁盘上已变化）" : "") + '"><span class="star">' + (dirty ? "●" : (ext ? "!" : "")) + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '" title="关闭">×</button></div>';
+      return '<div class="tab' + (d === state.active ? " on" : "") + (dirty ? " dirty" : "") + (ext ? " ext-changed" : "") + '" draggable="true" data-id="' + d.id + '" title="' + ND.esc(d.path || d.name) + (ext ? "（磁盘上已变化）" : "") + '"><span class="star">' + (dirty ? "●" : (ext ? "!" : "")) + '</span><span class="name">' + ND.esc(d.name) + '</span><button type="button" class="x" data-x="' + d.id + '" title="关闭" draggable="false">×</button></div>';
     }).join("");
     requestAnimationFrame(function () {
       ensureActiveTabVisible();
       updateTabsNav();
     });
+  }
+
+  var tabDrag = { id: null, overId: null, before: true, moved: false };
+
+  function clearTabDropMarks() {
+    var host = $("#tabs");
+    if (!host) return;
+    var marks = host.querySelectorAll(".tab.drop-before, .tab.drop-after, .tab.dragging");
+    for (var i = 0; i < marks.length; i++) {
+      marks[i].classList.remove("drop-before", "drop-after", "dragging");
+    }
+  }
+
+  function setTabDropMark(tab, before) {
+    clearTabDropMarks();
+    var dragEl = tabDrag.id != null ? $('#tabs .tab[data-id="' + tabDrag.id + '"]') : null;
+    if (dragEl) dragEl.classList.add("dragging");
+    if (!tab) return;
+    tab.classList.add(before ? "drop-before" : "drop-after");
+  }
+
+  function moveDocTab(fromId, toId, before) {
+    fromId = Number(fromId);
+    toId = Number(toId);
+    var from = -1;
+    var to = -1;
+    for (var i = 0; i < state.docs.length; i++) {
+      if (state.docs[i].id === fromId) from = i;
+      if (state.docs[i].id === toId) to = i;
+    }
+    if (from < 0 || to < 0 || from === to) return false;
+    var insertAt = before ? to : to + 1;
+    var doc = state.docs.splice(from, 1)[0];
+    if (from < insertAt) insertAt--;
+    if (insertAt === from) {
+      state.docs.splice(from, 0, doc);
+      return false;
+    }
+    state.docs.splice(insertAt, 0, doc);
+    return true;
   }
 
   function ensureActiveTabVisible() {
@@ -4597,6 +4637,12 @@
       if (btn) run(btn.getAttribute("data-act"));
     });
     $("#tabs").addEventListener("click", function (e) {
+      if (tabDrag.moved) {
+        tabDrag.moved = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       var x = e.target.closest("[data-x]");
       if (x) { closeDoc(docById(x.getAttribute("data-x"))); return; }
       var tab = e.target.closest(".tab");
@@ -4612,6 +4658,72 @@
       e.preventDefault();
       var doc = docById(tab.getAttribute("data-id"));
       if (doc) tabContextMenu(e.clientX, e.clientY, doc);
+    });
+    $("#tabs").addEventListener("dragstart", function (e) {
+      if (e.target.closest("[data-x]")) { e.preventDefault(); return; }
+      var tab = e.target.closest(".tab");
+      if (!tab || state.docs.length < 2) { e.preventDefault(); return; }
+      tabDrag.id = Number(tab.getAttribute("data-id"));
+      tabDrag.overId = null;
+      tabDrag.before = true;
+      tabDrag.moved = false;
+      tab.classList.add("dragging");
+      try {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(tabDrag.id));
+      } catch (err) { /* ignore */ }
+    });
+    $("#tabs").addEventListener("dragend", function () {
+      clearTabDropMarks();
+      tabDrag.id = null;
+      tabDrag.overId = null;
+    });
+    $("#tabs").addEventListener("dragover", function (e) {
+      if (tabDrag.id == null) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = "move"; } catch (err) { /* ignore */ }
+      var tab = e.target.closest(".tab");
+      if (!tab) return;
+      var overId = Number(tab.getAttribute("data-id"));
+      if (overId === tabDrag.id) {
+        setTabDropMark(null, true);
+        tabDrag.overId = null;
+        return;
+      }
+      var rect = tab.getBoundingClientRect();
+      var before = e.clientX < rect.left + rect.width / 2;
+      tabDrag.overId = overId;
+      tabDrag.before = before;
+      setTabDropMark(tab, before);
+    });
+    $("#tabs").addEventListener("dragleave", function (e) {
+      if (tabDrag.id == null) return;
+      if (e.target === $("#tabs") || !e.relatedTarget || !$("#tabs").contains(e.relatedTarget)) {
+        setTabDropMark(null, true);
+        tabDrag.overId = null;
+      }
+    });
+    $("#tabs").addEventListener("drop", function (e) {
+      if (tabDrag.id == null) return;
+      e.preventDefault();
+      var tab = e.target.closest(".tab");
+      var overId = tabDrag.overId;
+      var before = tabDrag.before;
+      if (tab) {
+        overId = Number(tab.getAttribute("data-id"));
+        var rect = tab.getBoundingClientRect();
+        before = e.clientX < rect.left + rect.width / 2;
+      }
+      var fromId = tabDrag.id;
+      clearTabDropMarks();
+      tabDrag.id = null;
+      tabDrag.overId = null;
+      if (overId == null || overId === fromId) return;
+      if (!moveDocTab(fromId, overId, before)) return;
+      tabDrag.moved = true;
+      renderTabs();
+      if (state.side === "docs") renderSide();
+      rememberSession();
     });
     var tabsMore = $("#tabsMore");
     if (tabsMore) tabsMore.addEventListener("click", function (e) {
