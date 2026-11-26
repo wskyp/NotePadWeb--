@@ -2504,8 +2504,23 @@
       return '<div class="menu-item" data-pick="' + it[1] + '"><span>' + it[0] + "</span></div>";
     }).join("");
     el.classList.remove("hidden");
-    el.style.left = Math.min(x, window.innerWidth - 200) + "px";
-    el.style.top = Math.min(y, window.innerHeight - 40) + "px";
+    el.style.visibility = "hidden";
+    el.style.left = "0px";
+    el.style.top = "0px";
+    var pad = 8;
+    var rect = el.getBoundingClientRect();
+    var vw = window.innerWidth || document.documentElement.clientWidth || 800;
+    var vh = window.innerHeight || document.documentElement.clientHeight || 600;
+    var left = x;
+    var top = y;
+    if (left + rect.width > vw - pad) left = vw - pad - rect.width;
+    if (left < pad) left = pad;
+    if (top + rect.height > vh - pad) top = y - rect.height;
+    if (top < pad) top = pad;
+    if (top + rect.height > vh - pad) top = Math.max(pad, vh - pad - rect.height);
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    el.style.visibility = "";
     el.onclick = function (e) {
       var item = e.target.closest("[data-pick]");
       el.classList.add("hidden");
@@ -2677,20 +2692,219 @@
     if (res.capped) toast("匹配很多，高亮只标了前 8000 处，后面的匹配没有标出。");
   }
 
+  function mdPreviewShowing() {
+    var pane = $("#mdPreview");
+    return !!(pane && !pane.classList.contains("hidden"));
+  }
+
+  function clearMdHits(body) {
+    if (!body) return;
+    var marks = body.querySelectorAll("mark.md-hit");
+    for (var i = marks.length - 1; i >= 0; i--) {
+      var mark = marks[i];
+      var parent = mark.parentNode;
+      if (!parent) continue;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      parent.normalize();
+    }
+    var flash = body.querySelectorAll(".md-find-flash");
+    for (var j = 0; j < flash.length; j++) flash[j].classList.remove("md-find-flash");
+  }
+
+  function findMdBlock(body, line) {
+    var nodes = body.querySelectorAll("[data-md-line]");
+    var best = null;
+    var bestSpan = Infinity;
+    var fallback = null;
+    var fallbackLine = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var a = Number(nodes[i].getAttribute("data-md-line"));
+      if (!isFinite(a)) continue;
+      var b = Number(nodes[i].getAttribute("data-md-end"));
+      if (!isFinite(b)) b = a;
+      if (line >= a && line <= b) {
+        var span = b - a;
+        if (span < bestSpan || (span === bestSpan && best && best.contains(nodes[i]))) {
+          bestSpan = span;
+          best = nodes[i];
+        }
+      } else if (a <= line && a >= fallbackLine) {
+        fallbackLine = a;
+        fallback = nodes[i];
+      }
+    }
+    return best || fallback || nodes[0] || null;
+  }
+
+  function nextTextNode(root, after) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    if (after) walker.currentNode = after;
+    return walker.nextNode();
+  }
+
+  function wrapMdTextRange(root, startOffset, length) {
+    if (!root || length <= 0) return null;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var node = walker.nextNode();
+    var remaining = startOffset;
+    while (node) {
+      if (remaining < node.length) break;
+      remaining -= node.length;
+      node = walker.nextNode();
+    }
+    if (!node) return null;
+    var left = length;
+    var offset = remaining;
+    var firstMark = null;
+    while (node && left > 0) {
+      if (offset > 0) {
+        node = node.splitText(offset);
+        offset = 0;
+      }
+      var take = Math.min(node.length, left);
+      if (take < node.length) node.splitText(take);
+      var mark = document.createElement("mark");
+      mark.className = "md-hit";
+      var parent = node.parentNode;
+      parent.replaceChild(mark, node);
+      mark.appendChild(node);
+      if (!firstMark) firstMark = mark;
+      left -= take;
+      if (left <= 0) break;
+      node = nextTextNode(root, mark);
+      offset = 0;
+    }
+    return firstMark;
+  }
+
+  function wrapMdNthNeedle(root, needle, nth, caseSensitive) {
+    if (!root || !needle) return null;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var seen = 0;
+    var nd = caseSensitive ? needle : needle.toLowerCase();
+    var node = walker.nextNode();
+    while (node) {
+      var text = node.nodeValue || "";
+      var hay = caseSensitive ? text : text.toLowerCase();
+      var from = 0;
+      while (from < hay.length) {
+        var at = hay.indexOf(nd, from);
+        if (at < 0) break;
+        if (seen === nth) {
+          var abs = 0;
+          var probe = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+          var cur = probe.nextNode();
+          while (cur && cur !== node) {
+            abs += (cur.nodeValue || "").length;
+            cur = probe.nextNode();
+          }
+          return wrapMdTextRange(root, abs + at, needle.length);
+        }
+        seen++;
+        from = at + Math.max(1, nd.length);
+      }
+      node = walker.nextNode();
+    }
+    return null;
+  }
+
+  function countNeedleBefore(lines, startLine, endLine, endCol, needle, caseSensitive) {
+    if (!needle) return 0;
+    var count = 0;
+    var nd = caseSensitive ? needle : needle.toLowerCase();
+    for (var L = startLine; L <= endLine; L++) {
+      var raw = lines[L] || "";
+      var hay = caseSensitive ? raw : raw.toLowerCase();
+      var from = 0;
+      var limit = L === endLine ? endCol : hay.length;
+      while (from < limit) {
+        var i = hay.indexOf(nd, from);
+        if (i < 0 || i >= limit) break;
+        count++;
+        from = i + Math.max(1, nd.length);
+      }
+    }
+    return count;
+  }
+
+  function revealMdHit(match, opts) {
+    if (!mdPreviewShowing() || !match) return;
+    var body = $("#mdBody");
+    if (!body) return;
+    if (!body.querySelector("[data-md-line]") || body.querySelector("pre[data-md-line]:not([data-md-end])")) {
+      mdCache.text = null;
+      refreshMd();
+    }
+    clearMdHits(body);
+    var d = active();
+    if (!d) return;
+    var lines = d.model.lines;
+    var hitLine = match.line | 0;
+    var hitCol = match.col | 0;
+    var hitLen = Math.max(1, match.len | 0);
+    var needle = (lines[hitLine] || "").substr(hitCol, hitLen);
+    var el = findMdBlock(body, hitLine);
+    if (!el) return;
+    var markEl = null;
+    var tag = el.tagName;
+    if (tag === "PRE" && needle) {
+      var fenceLine = Number(el.getAttribute("data-md-line"));
+      var rel = hitLine - fenceLine - 1;
+      if (rel >= 0) {
+        var offset = 0;
+        for (var L = fenceLine + 1; L < hitLine; L++) offset += (lines[L] || "").length + 1;
+        offset += hitCol;
+        markEl = wrapMdTextRange(el, offset, hitLen);
+      }
+    }
+    if (!markEl && needle) {
+      var blockStart = Number(el.getAttribute("data-md-line"));
+      if (!isFinite(blockStart)) blockStart = hitLine;
+      // 代码块内容从围栏下一行开始；其它块从 data-md-line 起算
+      var contentStart = tag === "PRE" ? blockStart + 1 : blockStart;
+      if (contentStart > hitLine) contentStart = hitLine;
+      var caseSensitive = !!(opts && (opts.case || opts.regex));
+      var nth = countNeedleBefore(lines, contentStart, hitLine, hitCol, needle, caseSensitive);
+      markEl = wrapMdNthNeedle(el, needle, nth, caseSensitive);
+    }
+    var focus = markEl || el;
+    if (markEl) markEl.classList.add("md-find-flash");
+    else el.classList.add("md-find-flash");
+    focus.scrollIntoView({ block: "center", behavior: "smooth" });
+    clearTimeout(revealMdHit._timer);
+    revealMdHit._timer = setTimeout(function () {
+      if (markEl) markEl.classList.remove("md-find-flash");
+      el.classList.remove("md-find-flash");
+    }, 1600);
+  }
+
   function doFind(dir) {
     var d = active();
     if (!d || editor.hexOn) return;
     var opts = findOpts();
     if (!opts.query) return openFind(false);
+    editor._revealNext = true;
     var res = d.model.findNext(opts, dir);
     if (res.error) { toast(res.error); return; }
     if (!res.found) { toast("找不到 " + opts.query); editor.setMarks([]); return; }
-    editor._revealNext = true;
-    editor.reveal();
+    if (editor._raf) {
+      cancelAnimationFrame(editor._raf);
+      editor._raf = 0;
+    }
+    // 先同步重绘撑开 spacer，再滚到匹配行（否则 scrollTop 可能被夹在旧高度）
+    editor.render();
+    editor.reveal(true);
+    editor.render();
+    var hit = res.match || { line: d.model.cursor.line, col: d.model.anchor.col, len: Math.max(1, d.model.cursor.col - d.model.anchor.col) };
+    revealMdHit(hit, opts);
+    if (!mdPreviewShowing() || (settings.mdView || "off") !== "preview") editor.focus();
     applyMarks();
-    if (res.partial && res.count == null) toast("已找到。文件较大，没有统计全部匹配数量，高亮也没有铺满全文。");
-    else if (res.partial) toast((res.index + 1) + " / 至少 " + res.count + "。后面的匹配没有继续统计。");
-    else toast((res.index + 1) + " / " + res.count);
+    paintStatus();
+    var lineNo = hit.line + 1;
+    if (res.partial && res.count == null) toast("已定位到第 " + lineNo + " 行。文件较大，没有统计全部匹配数量。");
+    else if (res.partial) toast((res.index + 1) + " / 至少 " + res.count + " · 第 " + lineNo + " 行");
+    else toast((res.index + 1) + " / " + res.count + " · 第 " + lineNo + " 行");
   }
 
   async function ensureTree(node, job) {

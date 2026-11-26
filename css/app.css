@@ -450,6 +450,20 @@ body[data-theme="dark"] .ed-suggest .sug-note, body[data-theme="monokai"] .ed-su
 .md-doc img { max-width: 100%; }
 .md-doc input[type="checkbox"] { margin-right: .35em; }
 .md-doc .md-note { color: var(--muted); }
+.md-doc mark.md-hit {
+  background: #ffe08a;
+  color: inherit;
+  padding: 0 .08em;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.md-doc mark.md-hit.md-find-flash,
+.md-doc .md-find-flash {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: #ffd24d;
+}
 
 #csvPanel {
   position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 4;

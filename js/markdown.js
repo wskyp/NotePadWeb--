@@ -103,8 +103,16 @@
     return id;
   }
 
-  function heading(level, inner) {
-    return "<h" + level + ' id="' + slug(inner) + '">' + inner + "</h" + level + ">";
+  function heading(level, inner, line) {
+    var attr = line == null ? "" : ' data-md-line="' + line + '"';
+    return "<h" + level + ' id="' + slug(inner) + '"' + attr + ">" + inner + "</h" + level + ">";
+  }
+
+  function withLine(html, line, end) {
+    if (line == null || line < 0) return html;
+    var attr = ' data-md-line="' + line + '"';
+    if (end != null && end >= line) attr += ' data-md-end="' + end + '"';
+    return String(html).replace(/^<([a-zA-Z][a-zA-Z0-9]*)\b/, "<$1" + attr);
   }
 
   function paint(text, tokens) {
@@ -172,7 +180,9 @@
     return s.split("|").map(function (c) { return c.trim(); });
   }
 
-  function readTable(lines, i) {
+  function readTable(lines, i, lineBase) {
+    lineBase = lineBase || 0;
+    var start = lineBase + i;
     var head = splitRow(lines[i]);
     var aligns = splitRow(lines[i + 1]).map(function (c) {
       var left = c.charAt(0) === ":";
@@ -195,17 +205,20 @@
     var b = body.map(function (row) {
       return "<tr>" + head.map(function (_, n) { return cell("td", row[n] || "", n); }).join("") + "</tr>";
     }).join("");
-    return { html: "<table><thead>" + h + "</thead><tbody>" + b + "</tbody></table>", next: i };
+    return { html: withLine("<table><thead>" + h + "</thead><tbody>" + b + "</tbody></table>", start, lineBase + i - 1), next: i };
   }
 
-  function readList(lines, i) {
+  function readList(lines, i, lineBase) {
+    lineBase = lineBase || 0;
     var first = listMarker(lines[i]);
     var ordered = first.ordered;
     var base = first.indent;
+    var start = lineBase + i;
     var items = [];
     while (i < lines.length) {
       var m = listMarker(lines[i]);
       if (!m || m.indent !== base || m.ordered !== ordered) break;
+      var itemLine = lineBase + i;
       var text = m.text;
       i++;
       var cont = [];
@@ -219,7 +232,7 @@
       if (i < lines.length) {
         var sub = listMarker(lines[i]);
         if (sub && sub.indent > base) {
-          var built = readList(lines, i);
+          var built = readList(lines, i, lineBase);
           nested = built.html;
           i = built.next;
         }
@@ -230,10 +243,10 @@
         body = '<input type="checkbox" disabled' + (task[1].toLowerCase() === "x" ? " checked" : "") + "> " + inline(task[2]);
       } else body = inline(text);
       if (cont.length) body += " " + cont.map(inline).join(" ");
-      items.push("<li>" + body + nested + "</li>");
+      items.push(withLine("<li>" + body + nested + "</li>", itemLine, lineBase + i - 1));
     }
     var tag = ordered ? "ol" : "ul";
-    return { html: "<" + tag + ">" + items.join("") + "</" + tag + ">", next: i };
+    return { html: withLine("<" + tag + ">" + items.join("") + "</" + tag + ">", start, lineBase + i - 1), next: i };
   }
 
   function joinPara(rows) {
@@ -245,13 +258,15 @@
     return bits.join("");
   }
 
-  function render(src) {
+  function render(src, lineBase) {
+    lineBase = lineBase || 0;
     var lines = String(src == null ? "" : src).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     var i = 0;
     var out = [];
     while (i < lines.length) {
       var line = lines[i];
       if (!line.trim()) { i++; continue; }
+      var abs = lineBase + i;
 
       var fence = line.match(/^ {0,3}(```+|~~~+)(.*)$/);
       if (fence) {
@@ -266,31 +281,32 @@
           buf.push(lines[i]);
           i++;
         }
-        out.push("<pre><code>" + highlight(buf.join("\n"), lang) + "</code></pre>");
+        out.push(withLine("<pre><code>" + highlight(buf.join("\n"), lang) + "</code></pre>", abs, lineBase + i - 1));
         continue;
       }
 
       var atx = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
       if (atx) {
-        out.push(heading(atx[1].length, inline(atx[2])));
+        out.push(heading(atx[1].length, inline(atx[2]), abs));
         i++;
         continue;
       }
 
       if (i + 1 < lines.length && line.trim() && !isHr(line) && /^ {0,3}=+\s*$/.test(lines[i + 1])) {
-        out.push(heading(1, inline(line.trim())));
+        out.push(heading(1, inline(line.trim()), abs));
         i += 2;
         continue;
       }
       if (i + 1 < lines.length && line.trim() && !isHr(line) && /^ {0,3}-+\s*$/.test(lines[i + 1])) {
-        out.push(heading(2, inline(line.trim())));
+        out.push(heading(2, inline(line.trim()), abs));
         i += 2;
         continue;
       }
 
-      if (isHr(line)) { out.push("<hr>"); i++; continue; }
+      if (isHr(line)) { out.push(withLine("<hr>", abs)); i++; continue; }
 
       if (/^ {0,3}>/.test(line)) {
+        var quoteStart = i;
         var quote = [];
         while (i < lines.length && (/^ {0,3}>/.test(lines[i]) || (quote.length && lines[i].trim() && !blockStart(lines[i])))) {
           quote.push(lines[i].replace(/^ {0,3}>\s?/, ""));
@@ -300,38 +316,39 @@
             else break;
           }
         }
-        out.push("<blockquote>" + render(quote.join("\n")) + "</blockquote>");
+        out.push(withLine("<blockquote>" + render(quote.join("\n"), lineBase + quoteStart) + "</blockquote>", lineBase + quoteStart, lineBase + i - 1));
         continue;
       }
 
       if (isTable(lines, i)) {
-        var table = readTable(lines, i);
+        var table = readTable(lines, i, lineBase);
         out.push(table.html);
         i = table.next;
         continue;
       }
 
       if (listMarker(line)) {
-        var list = readList(lines, i);
+        var list = readList(lines, i, lineBase);
         out.push(list.html);
         i = list.next;
         continue;
       }
 
+      var paraStart = abs;
       var para = [];
       while (i < lines.length && lines[i].trim() && !blockStart(lines[i]) && !isTable(lines, i)) {
         if (para.length && i + 1 < lines.length && /^ {0,3}(=+|-+)\s*$/.test(lines[i + 1]) && !isHr(lines[i])) break;
         para.push(lines[i]);
         i++;
       }
-      if (para.length) out.push("<p>" + joinPara(para) + "</p>");
+      if (para.length) out.push(withLine("<p>" + joinPara(para) + "</p>", paraStart, lineBase + i - 1));
     }
     return out.join("\n");
   }
 
   function toHtml(src) {
     seen = Object.create(null);
-    return render(src);
+    return render(src, 0);
   }
 
   ND.Markdown = { toHtml: toHtml };

@@ -780,16 +780,27 @@ var ND = ND || {};
     this.updateSuggest();
   };
 
-  Editor.prototype.reveal = function () {
+  Editor.prototype.reveal = function (center) {
     if (!this.model || this.hexOn) return;
     var m = this.model;
-    var v = this.visualIndex(m.cursor.line, m.cursor.col);
-    var y = v * this.lineHeight;
+    this.rebuild();
+    var lh = this.lineHeight || 20;
+    var total = this._vcount || 1;
+    // 先拉高 spacer，再改 scrollTop，避免高度未更新时被浏览器夹住（同 follow 滚底）
+    if (this.spacer) this.spacer.style.height = total * lh + "px";
+    var focus = m.hasSelection() && !m.colSel ? m.norm().a : m.cursor;
+    var v = this.visualIndex(focus.line, focus.col);
+    var y = v * lh;
     var view = this.view;
     var h = view.clientHeight || 0;
-    if (y < view.scrollTop) view.scrollTop = y;
-    else if (y + this.lineHeight > view.scrollTop + h) view.scrollTop = y + this.lineHeight - h + 2;
-    var x = M().visualOf(m.lines[m.cursor.line], m.cursor.col, m.tabSize) * this.asciiW;
+    if (center && h > lh * 4) {
+      view.scrollTop = Math.max(0, y - Math.floor(h * 0.35));
+    } else {
+      var margin = Math.min(80, Math.floor(h * 0.2));
+      if (y < view.scrollTop + margin) view.scrollTop = Math.max(0, y - margin);
+      else if (y + lh > view.scrollTop + h - margin) view.scrollTop = Math.max(0, y + lh - h + margin);
+    }
+    var x = M().visualOf(m.lines[focus.line], focus.col, m.tabSize) * this.asciiW;
     var w = view.clientWidth || 0;
     if (x < view.scrollLeft + 8) view.scrollLeft = Math.max(0, x - 20);
     else if (x > view.scrollLeft + w - 24) view.scrollLeft = x - w + 40;

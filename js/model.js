@@ -963,11 +963,11 @@ var ND = ND || {};
   }
 
   function placeFind(model, hit) {
-    model.unfoldAround(hit.line);
     model.colSel = null;
     model.anchor = { line: hit.line, col: hit.col };
     model.cursor = { line: hit.line, col: hit.col + hit.len };
     model.prefCol = visualOf(model.lines[hit.line], model.cursor.col, model.tabSize);
+    model.unfoldAround(hit.line);
     model.changed();
   }
 
@@ -977,13 +977,13 @@ var ND = ND || {};
     if (finder.error) return { error: finder.error };
     if (this.lines.length > 20000) {
       var forward = dir >= 0;
-      var line = this.cursor.line;
-      var col = this.cursor.col;
-      if (!forward) {
-        var origin = this.hasSelection() ? this.norm().a : this.cursor;
-        line = origin.line;
-        col = origin.col;
+      var origin = this.cursor;
+      if (this.hasSelection() && !this.colSel) {
+        var range = this.norm();
+        origin = forward ? range.b : range.a;
       }
+      var line = origin.line;
+      var col = origin.col;
       var hit = scanMatch(this.lines, finder, opts, line, col, forward ? 1 : -1);
       if (!hit && opts.wrap !== false) {
         if (forward) hit = scanMatch(this.lines, finder, opts, 0, 0, 1);
@@ -1002,14 +1002,15 @@ var ND = ND || {};
     if (!ms.length) return { found: false, count: 0, partial: !!res.capped };
     var pick = -1;
     if (dir >= 0) {
-      var line = this.cursor.line;
-      var col = this.cursor.col;
+      var from = this.hasSelection() && !this.colSel ? this.norm().b : this.cursor;
+      var line = from.line;
+      var col = from.col;
       for (var i = 0; i < ms.length; i++) {
         if (ms[i].line > line || (ms[i].line === line && ms[i].col >= col)) { pick = i; break; }
       }
       if (pick < 0 && opts.wrap !== false) pick = 0;
     } else {
-      var a = this.hasSelection() ? this.norm().a : this.cursor;
+      var a = this.hasSelection() && !this.colSel ? this.norm().a : this.cursor;
       for (i = ms.length - 1; i >= 0; i--) {
         if (ms[i].line < a.line || (ms[i].line === a.line && ms[i].col < a.col)) { pick = i; break; }
       }
